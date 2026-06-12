@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# PyInstaller
+build/
+dist/
+*.spec.bak
+
+# App runtime data
+*.log
+action_history.json
+
+# OS / editor
+Thumbs.db
+.vscode/
+.idea/
