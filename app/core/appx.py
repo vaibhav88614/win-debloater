@@ -20,12 +20,14 @@ class AppxPackage:
     version: str = ""
     install_location: str = ""
     is_provisioned: bool = False   # Present in the provisioned (per-image) store
+    is_non_removable: bool = False # Windows marks this NonRemovable in the AppX DB
     # Catalog enrichment
     friendly_name: str = ""
     category: str = "Other"
     safe: bool = True
     description: str = ""
     catalog_id: str = ""
+    removal_note: str = ""         # Extra guidance shown in the UI tooltip
 
     @property
     def display_name(self) -> str:
@@ -44,15 +46,14 @@ def load_catalog() -> list[dict]:
 
 
 def _match_catalog(package_name: str, catalog: list[dict]) -> Optional[dict]:
-    """Match an installed package name against catalog patterns."""
+    """Match an installed package name against catalog patterns (exact, then wildcard)."""
+    low = package_name.lower()
     for entry in catalog:
         pattern = entry.get("id", "")
         if not pattern:
             continue
-        if pattern == package_name:
+        if pattern.lower() == low:
             return entry
-    # Fallback to wildcard / case-insensitive contains matching.
-    low = package_name.lower()
     for entry in catalog:
         pattern = entry.get("id", "")
         if "*" in pattern and fnmatch(low, pattern.lower()):
@@ -61,18 +62,19 @@ def _match_catalog(package_name: str, catalog: list[dict]) -> Optional[dict]:
 
 
 def list_installed(include_all_users: bool = True) -> list[AppxPackage]:
-    """List installed AppX packages, enriched with catalog metadata.
+    """List *all* AppX packages (including NonRemovable), enriched with catalog data.
 
-    Returns packages for the current user (plus provisioned packages).
+    ``is_non_removable`` is set on packages Windows has flagged as protected;
+    the caller (UI) decides whether to display/allow actions on them.
     """
     catalog = load_catalog()
     packages: dict[str, AppxPackage] = {}
 
     scope = "-AllUsers" if include_all_users else ""
+    # Fetch ALL packages — including NonRemovable — so nothing is hidden.
     user_script = (
         f"Get-AppxPackage {scope} | "
-        "Where-Object { $_.NonRemovable -ne $true } | "
-        "Select-Object Name, PackageFullName, Publisher, Version, InstallLocation"
+        "Select-Object Name, PackageFullName, Publisher, Version, InstallLocation, NonRemovable"
     )
     res = ps.run_json(user_script, timeout=180)
     if res.ok:
@@ -86,9 +88,10 @@ def list_installed(include_all_users: bool = True) -> list[AppxPackage]:
                 publisher=item.get("Publisher") or "",
                 version=str(item.get("Version") or ""),
                 install_location=item.get("InstallLocation") or "",
+                is_non_removable=bool(item.get("NonRemovable")),
             )
 
-    # Provisioned packages (apply to new users / fresh installs).
+    # Provisioned packages (apply to new user profiles / feature updates).
     prov_script = (
         "Get-AppxProvisionedPackage -Online | "
         "Select-Object DisplayName, PackageName"
@@ -119,49 +122,70 @@ def list_installed(include_all_users: bool = True) -> list[AppxPackage]:
             pkg.safe = bool(entry.get("safe", True))
             pkg.description = entry.get("description", "")
             pkg.catalog_id = entry.get("id", "")
+            pkg.removal_note = entry.get("removal_note", "")
+            # If marked force_required in catalog, override the is_non_removable flag
+            # (some packages are mis-labelled, or the flag is lifted by elevation).
+            if entry.get("force_required"):
+                pkg.is_non_removable = True
         else:
             pkg.friendly_name = ""
             pkg.category = "Other (not in catalog)"
-            pkg.safe = False  # Unknown packages are treated as advanced-only.
+            # Unknown packages: safe=False so they only appear in Advanced mode.
+            pkg.safe = False
+
         result.append(pkg)
 
     result.sort(key=lambda p: (p.category, p.display_name.lower()))
     return result
 
 
-def remove_package(pkg: AppxPackage, *, all_users: bool = True, deprovision: bool = True) -> ps.PSResult:
-    """Remove an installed AppX package (and optionally deprovision it).
+def remove_package(
+    pkg: AppxPackage,
+    *,
+    all_users: bool = True,
+    deprovision: bool = True,
+) -> ps.PSResult:
+    """Remove an AppX package, optionally deprovisioning it.
 
-    Returns the PSResult of the removal command.
+    For ``NonRemovable`` packages the registry lock is cleared first via a
+    well-known trick used by debloater projects (requires Administrator).
     """
-    commands: list[str] = []
-
-    target = pkg.full_name or pkg.name
     scope = "-AllUsers" if all_users else ""
-    # Remove for installed users.
-    commands.append(
+    cmds: list[str] = []
+
+    # ---- NonRemovable registry-unlock ----
+    # Windows stores a "NonRemovable" DWORD under the package's AppxAllUserStore
+    # registry key. Deleting it (as Administrator) allows normal removal.
+    if pkg.is_non_removable:
+        cmds.append(
+            "$_fn = (Get-AppxPackage -Name '{name}' | Select-Object -ExpandProperty PackageFullName -ErrorAction SilentlyContinue);"
+            "$_key = \"HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Appx\\AppxAllUserStore\\Applications\\$_fn\";"
+            "if (Test-Path $_key) {{ Remove-ItemProperty -Path $_key -Name 'NonRemovable' -ErrorAction SilentlyContinue }}"
+            .format(name=pkg.name)
+        )
+
+    # ---- Remove for installed users ----
+    cmds.append(
         f"Get-AppxPackage {scope} -Name '{pkg.name}' | Remove-AppxPackage -ErrorAction SilentlyContinue"
     )
     if pkg.full_name:
-        commands.append(
+        cmds.append(
             f"Remove-AppxPackage {scope} -Package '{pkg.full_name}' -ErrorAction SilentlyContinue"
         )
 
-    # Deprovision so it won't return for new users / feature updates.
+    # ---- Deprovision (prevents re-install for new users / Windows Update) ----
     if deprovision:
-        commands.append(
+        cmds.append(
             "Get-AppxProvisionedPackage -Online | "
             f"Where-Object {{ $_.DisplayName -eq '{pkg.name}' }} | "
             "Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue"
         )
 
-    script = "; ".join(commands)
-    return ps.run(script, timeout=240)
+    return ps.run("; ".join(cmds), timeout=300)
 
 
 def restore_package(pkg: AppxPackage) -> ps.PSResult:
     """Attempt to re-register / reinstall a previously removed package."""
-    # Re-register from any remaining on-disk manifest for all users.
     script = (
         "$ErrorActionPreference='SilentlyContinue';"
         f"$pkg='{pkg.name}';"
@@ -171,7 +195,6 @@ def restore_package(pkg: AppxPackage) -> ps.PSResult:
         "}"
     )
     res = ps.run(script, timeout=180)
-    # If nothing was re-registered, hint the user toward the Store.
     if res.ok and not res.stdout.strip():
         res.stdout = (
             f"No on-disk manifest found for '{pkg.name}'. "

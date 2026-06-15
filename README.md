@@ -1,4 +1,4 @@
-# Window Debloater & Task Control
+# Windows Debloater & Task Control
 
 A modern PySide6 desktop tool (packaged as a single `.exe`) to remove Windows
 bloatware, control background services and scheduled tasks, and detect/act on
