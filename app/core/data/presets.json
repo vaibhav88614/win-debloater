@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "presets": [
+    {
+      "id": "privacy_starter",
+      "name": "Privacy starter (safe)",
+      "description": "Conservative privacy pick: telemetry-ish apps that are safe to remove and easy to reinstall.",
+      "match": {
+        "categories": ["Telemetry", "News & Info"],
+        "ids": ["Microsoft.MicrosoftFeedbackHub", "Microsoft.GetHelp", "Microsoft.WindowsAlarms", "Microsoft.WindowsMaps"]
+      },
+      "safe_only": true
+    },
+    {
+      "id": "all_xbox",
+      "name": "All Xbox apps",
+      "description": "Every catalog entry in the Xbox category. NonRemovable items still require Advanced mode.",
+      "match": { "categories": ["Xbox"] },
+      "safe_only": false
+    },
+    {
+      "id": "all_third_party",
+      "name": "All third-party apps",
+      "description": "Non-Microsoft OEM/vendor apps that the catalog knows about.",
+      "match": { "categories": ["Third-Party"] },
+      "safe_only": false
+    },
+    {
+      "id": "all_news_and_info",
+      "name": "All News & Info apps",
+      "description": "Bing News/Weather/Sports/Money/Travel/Search.",
+      "match": { "categories": ["News & Info"] },
+      "safe_only": true
+    }
+  ]
+}

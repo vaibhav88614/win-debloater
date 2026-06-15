@@ -1,4 +1,5 @@
 """End-to-end GUI bootstrap test."""
+
 from __future__ import annotations
 
 import os
@@ -17,6 +18,8 @@ def qapp():
 
 
 def test_main_window_builds_with_all_tabs(qapp):
+    from PySide6.QtWidgets import QStatusBar
+
     from app.ui.main_window import MainWindow
 
     w = MainWindow(is_elevated=False)
@@ -35,5 +38,8 @@ def test_main_window_builds_with_all_tabs(qapp):
         # AppContext is wired up.
         assert w.ctx.is_advanced() is False
         assert w.ctx.want_restore_point() is True
+        # Real QStatusBar (not the old shim).
+        assert isinstance(w.statusBar(), QStatusBar)
+        assert w.centralWidget() is not None
     finally:
         w.close()

@@ -1,27 +1,41 @@
 """Heuristic detection of suspicious processes."""
+
 from __future__ import annotations
 
 import math
-import os
 import re
-from typing import Iterable
+from collections.abc import Iterable
 
 from app.core import powershell as ps
 from app.core.processes import ProcessInfo
 
-
 # Directories that are unusual locations for legitimate background software.
 _SUSPICIOUS_DIR_TOKENS = (
-    "\\temp\\", "\\tmp\\", "\\appdata\\local\\temp",
-    "\\downloads\\", "\\$recycle.bin\\", "\\windows\\temp\\",
-    "\\public\\", "\\programdata\\temp",
+    "\\temp\\",
+    "\\tmp\\",
+    "\\appdata\\local\\temp",
+    "\\downloads\\",
+    "\\$recycle.bin\\",
+    "\\windows\\temp\\",
+    "\\public\\",
+    "\\programdata\\temp",
 )
 
 # System binaries that should only ever live in System32 / SysWOW64.
 _SYSTEM_BINARIES = {
-    "svchost.exe", "csrss.exe", "lsass.exe", "services.exe", "winlogon.exe",
-    "wininit.exe", "smss.exe", "explorer.exe", "spoolsv.exe", "taskhostw.exe",
-    "dwm.exe", "conhost.exe", "rundll32.exe",
+    "svchost.exe",
+    "csrss.exe",
+    "lsass.exe",
+    "services.exe",
+    "winlogon.exe",
+    "wininit.exe",
+    "smss.exe",
+    "explorer.exe",
+    "spoolsv.exe",
+    "taskhostw.exe",
+    "dwm.exe",
+    "conhost.exe",
+    "rundll32.exe",
 }
 
 _SYSTEM_DIRS = ("\\windows\\system32", "\\windows\\syswow64", "\\windows\\")
@@ -86,7 +100,7 @@ def get_signatures(paths: Iterable[str]) -> dict[str, str]:
         return {}
 
     # Build a PowerShell array literal of paths.
-    escaped = ",".join("'" + p.replace("'", "''") + "'" for p in unique)
+    escaped = ",".join(ps.ps_quote(p) for p in unique)
     script = (
         f"@({escaped}) | ForEach-Object {{ "
         "$s = try { (Get-AuthenticodeSignature -LiteralPath $_).Status } catch { 'Unknown' }; "
@@ -103,19 +117,31 @@ def get_signatures(paths: Iterable[str]) -> dict[str, str]:
 
 
 def _looks_random(name: str) -> bool:
-    """Detect random-looking executable names (high entropy / digit-heavy)."""
+    """Detect random-looking executable names (high entropy / digit-heavy).
+
+    Tightened to reduce false positives:
+      * basename length >= 10 (so ``7zG.exe``, ``ms-teams.exe`` are spared),
+      * flag if > 40% of basename is digits, OR
+      * flag if Shannon entropy > 3.6 *and* vowel ratio < 25% of letters
+        (legitimate names contain plenty of vowels; random strings don't).
+    """
     base = re.sub(r"\.(exe|dll|scr|com)$", "", name.lower())
-    if len(base) < 5:
+    if len(base) < 10:
         return False
     digits = sum(c.isdigit() for c in base)
-    if len(base) >= 8 and digits / len(base) > 0.4:
-        return True
+    digit_heavy = digits / len(base) > 0.4
+    letters = [c for c in base if c.isalpha()]
+    if letters:
+        vowel_ratio = sum(c in "aeiou" for c in letters) / len(letters)
+    else:
+        vowel_ratio = 0.0
     # Shannon entropy on the basename.
     counts: dict[str, int] = {}
     for ch in base:
         counts[ch] = counts.get(ch, 0) + 1
     entropy = -sum((c / len(base)) * math.log2(c / len(base)) for c in counts.values())
-    return entropy > 3.6 and len(base) >= 10
+    high_entropy = entropy > 3.6
+    return digit_heavy or (high_entropy and vowel_ratio < 0.25)
 
 
 def _in_suspicious_dir(exe: str) -> bool:
@@ -136,8 +162,7 @@ def analyze(
         # Only verify executables outside trusted install roots; this keeps the
         # scan fast while still catching binaries in user-writable locations.
         candidate_paths = [
-            p.exe for p in procs
-            if p.exe and not any(d in p.exe.lower() for d in _TRUSTED_DIRS)
+            p.exe for p in procs if p.exe and not any(d in p.exe.lower() for d in _TRUSTED_DIRS)
         ]
         signatures = get_signatures(candidate_paths)
 

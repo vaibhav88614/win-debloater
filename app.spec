@@ -5,6 +5,7 @@ block_cipher = None
 
 datas = [
     ("app/core/data/bloatware.json", "app/core/data"),
+    ("app/core/data/presets.json", "app/core/data"),
     ("app/resources/style.qss", "app/resources"),
 ]
 
@@ -13,7 +14,15 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=datas,
-    hiddenimports=["psutil"],
+    hiddenimports=[
+        "psutil",
+        # Lazily imported from the UI (menu handlers / workers) — list them so
+        # PyInstaller always bundles them.
+        "app.core.profile",
+        "app.core.diagnostics",
+        "app.core.support",
+        "app.core.updates",
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

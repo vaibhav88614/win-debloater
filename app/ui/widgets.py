@@ -1,18 +1,29 @@
 """Reusable UI widgets and helpers."""
+
 from __future__ import annotations
 
-from typing import Optional
-
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
+
+
+def std_icon(widget: QWidget, name: str) -> QIcon:
+    """Return a built-in Qt standard icon by ``SP_*`` name (empty on miss)."""
+    sp = getattr(QStyle.StandardPixmap, name, None)
+    if sp is None:
+        sp = getattr(QStyle, name, None)
+    if sp is None:
+        return QIcon()
+    return widget.style().standardIcon(sp)
 
 
 class SearchBar(QWidget):
@@ -36,6 +47,7 @@ class SearchBar(QWidget):
 
         self.refresh_btn = QPushButton("Refresh")
         self.refresh_btn.setObjectName("ghost")
+        self.refresh_btn.setIcon(std_icon(self, "SP_BrowserReload"))
         self.refresh_btn.clicked.connect(self.refresh_clicked.emit)
 
         layout.addWidget(self.input, 1)

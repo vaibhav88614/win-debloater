@@ -1,4 +1,5 @@
 """Argument-quoting helpers in the elevation module."""
+
 from __future__ import annotations
 
 from app.core import elevation

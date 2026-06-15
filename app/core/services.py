@@ -1,19 +1,47 @@
 """List and control Windows services."""
+
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 
+from app.core import dryrun
 from app.core import powershell as ps
-
 
 # Services that should never be touched even in Advanced mode.
 PROTECTED_SERVICES = {
-    "rpcss", "dcomlaunch", "rpceptmapper", "plugplay", "power", "winmgmt",
-    "lsm", "samss", "eventlog", "schedule", "profsvc", "dnscache", "nsi",
-    "brokerinfrastructure", "systemeventsbroker", "coremessagingregistrar",
-    "wuauserv", "trustedinstaller", "cryptsvc", "bfe", "mpssvc", "windefend",
-    "wscsvc", "gpsvc", "themes", "audiosrv", "audioendpointbuilder",
-    "netprofm", "nlasvc", "wlansvc", "lanmanworkstation", "lanmanserver",
+    "rpcss",
+    "dcomlaunch",
+    "rpceptmapper",
+    "plugplay",
+    "power",
+    "winmgmt",
+    "lsm",
+    "samss",
+    "eventlog",
+    "schedule",
+    "profsvc",
+    "dnscache",
+    "nsi",
+    "brokerinfrastructure",
+    "systemeventsbroker",
+    "coremessagingregistrar",
+    "wuauserv",
+    "trustedinstaller",
+    "cryptsvc",
+    "bfe",
+    "mpssvc",
+    "windefend",
+    "wscsvc",
+    "gpsvc",
+    "themes",
+    "audiosrv",
+    "audioendpointbuilder",
+    "netprofm",
+    "nlasvc",
+    "wlansvc",
+    "lanmanworkstation",
+    "lanmanserver",
 }
 
 # Common services frequently disabled for privacy/performance (Safe mode list).
@@ -42,8 +70,8 @@ START_TYPES = ["Automatic", "AutomaticDelayedStart", "Manual", "Disabled"]
 class ServiceInfo:
     name: str
     display_name: str = ""
-    status: str = ""          # Running / Stopped
-    start_type: str = ""      # Auto / Manual / Disabled
+    status: str = ""  # Running / Stopped
+    start_type: str = ""  # Auto / Manual / Disabled
     description: str = ""
     can_stop: bool = True
     is_protected: bool = False
@@ -57,6 +85,8 @@ class ServiceInfo:
 
 def list_services() -> list[ServiceInfo]:
     """List all Windows services with status and startup type."""
+    if sys.platform != "win32":
+        return []
     script = (
         "Get-CimInstance Win32_Service | "
         "Select-Object Name, DisplayName, State, StartMode, Description, "
@@ -90,19 +120,35 @@ def list_services() -> list[ServiceInfo]:
 
 def set_start_type(name: str, start_type: str) -> ps.PSResult:
     """Set a service's startup type (Automatic/Manual/Disabled)."""
+    if not name or not name.strip():
+        return ps.PSResult(ok=False, returncode=-1, error="Service name is required.")
     if name.lower() in PROTECTED_SERVICES:
-        return ps.PSResult(ok=False, returncode=-1, error=f"'{name}' is protected and cannot be changed.")
+        return ps.PSResult(
+            ok=False, returncode=-1, error=f"'{name}' is protected and cannot be changed."
+        )
     if start_type not in START_TYPES:
         return ps.PSResult(ok=False, returncode=-1, error=f"Invalid start type '{start_type}'.")
-    script = f"Set-Service -Name '{name}' -StartupType {start_type}"
+    if dryrun.is_enabled():
+        return dryrun.dry_result(f"would set '{name}' startup to {start_type}")
+    script = f"Set-Service -Name {ps.ps_quote(name)} -StartupType {start_type}"
     return ps.run(script, timeout=60)
 
 
 def stop_service(name: str) -> ps.PSResult:
+    if not name or not name.strip():
+        return ps.PSResult(ok=False, returncode=-1, error="Service name is required.")
     if name.lower() in PROTECTED_SERVICES:
-        return ps.PSResult(ok=False, returncode=-1, error=f"'{name}' is protected and cannot be stopped.")
-    return ps.run(f"Stop-Service -Name '{name}' -Force -ErrorAction Stop", timeout=60)
+        return ps.PSResult(
+            ok=False, returncode=-1, error=f"'{name}' is protected and cannot be stopped."
+        )
+    if dryrun.is_enabled():
+        return dryrun.dry_result(f"would stop service '{name}'")
+    return ps.run(f"Stop-Service -Name {ps.ps_quote(name)} -Force -ErrorAction Stop", timeout=60)
 
 
 def start_service(name: str) -> ps.PSResult:
-    return ps.run(f"Start-Service -Name '{name}' -ErrorAction Stop", timeout=60)
+    if not name or not name.strip():
+        return ps.PSResult(ok=False, returncode=-1, error="Service name is required.")
+    if dryrun.is_enabled():
+        return dryrun.dry_result(f"would start service '{name}'")
+    return ps.run(f"Start-Service -Name {ps.ps_quote(name)} -ErrorAction Stop", timeout=60)

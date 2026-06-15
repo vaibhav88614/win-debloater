@@ -1,4 +1,5 @@
 """Resource and data path resolution for dev and PyInstaller-frozen runs."""
+
 from __future__ import annotations
 
 import os
@@ -13,7 +14,7 @@ def base_dir() -> Path:
     Otherwise they live next to the source tree (the project root).
     """
     if getattr(sys, "frozen", False):
-        return Path(getattr(sys, "_MEIPASS"))
+        return Path(sys._MEIPASS)  # type: ignore[attr-defined]  # set by PyInstaller
     # app/core/paths.py -> project root is two levels up from app/
     return Path(__file__).resolve().parents[2]
 

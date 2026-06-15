@@ -1,7 +1,9 @@
 """QThread workers so backend calls never block the UI."""
+
 from __future__ import annotations
 
-from typing import Any, Callable, Iterable
+from collections.abc import Callable, Iterable
+from typing import Any
 
 from PySide6.QtCore import QThread, Signal
 
@@ -32,9 +34,9 @@ class BatchWorker(QThread):
     ``action`` receives one item and returns (success: bool, message: str).
     """
 
-    progress = Signal(int, int, str)        # done, total, message
-    item_done = Signal(object, bool, str)   # item, success, message
-    finished_all = Signal(int, int)         # success_count, total
+    progress = Signal(int, int, str)  # done, total, message
+    item_done = Signal(object, bool, str)  # item, success, message
+    finished_all = Signal(int, int)  # success_count, total
 
     def __init__(self, items: Iterable[Any], action: Callable[[Any], tuple[bool, str]]) -> None:
         super().__init__()
@@ -44,6 +46,14 @@ class BatchWorker(QThread):
 
     def cancel(self) -> None:
         self._cancelled = True
+        # Kill any PowerShell child currently running inside the active item so
+        # a long removal/change aborts promptly instead of after it completes.
+        try:
+            from app.core import powershell as ps
+
+            ps.cancel_active()
+        except Exception:  # noqa: BLE001
+            pass
 
     def run(self) -> None:  # noqa: D401
         total = len(self._items)

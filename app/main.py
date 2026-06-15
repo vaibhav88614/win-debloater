@@ -2,10 +2,11 @@
 
 Handles UAC self-elevation, then launches the PySide6 GUI.
 """
+
 from __future__ import annotations
 
-import sys
 import os
+import sys
 
 # Allow running as `python -m app.main` or from a frozen exe.
 if __package__ in (None, ""):
@@ -22,8 +23,15 @@ def main() -> int:
         # An elevated instance was launched; this one should exit.
         return 0
 
+    # Wire the rotating log file early so PowerShell calls in the GUI thread
+    # are captured from the very first action.
+    from app.core.applog import setup as setup_log
+
+    setup_log()
+
     # Import Qt lazily so elevation logic stays fast and dependency-light.
     from PySide6.QtWidgets import QApplication
+
     from app.ui.main_window import MainWindow
 
     app = QApplication(sys.argv)

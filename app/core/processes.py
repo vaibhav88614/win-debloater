@@ -1,19 +1,41 @@
 """Enumerate and control running processes via psutil."""
+
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass, field
-from typing import Optional
 
 import psutil
+
+from app.core import dryrun
+
+# Seconds between the priming and measuring CPU reads. psutil's per-process
+# cpu_percent needs two samples; the first always returns 0.0.
+_CPU_SAMPLE_INTERVAL = 0.1
 
 
 # System / critical process names that must not be killed.
 PROTECTED_PROCESSES = {
-    "system", "system idle process", "registry", "smss.exe", "csrss.exe",
-    "wininit.exe", "services.exe", "lsass.exe", "winlogon.exe", "fontdrvhost.exe",
-    "dwm.exe", "svchost.exe", "explorer.exe", "spoolsv.exe", "memcompression",
-    "secure system", "lsaiso.exe", "windefend", "msmpeng.exe",
+    "system",
+    "system idle process",
+    "registry",
+    "smss.exe",
+    "csrss.exe",
+    "wininit.exe",
+    "services.exe",
+    "lsass.exe",
+    "winlogon.exe",
+    "fontdrvhost.exe",
+    "dwm.exe",
+    "svchost.exe",
+    "explorer.exe",
+    "spoolsv.exe",
+    "memcompression",
+    "secure system",
+    "lsaiso.exe",
+    "windefend",
+    "msmpeng.exe",
 }
 
 
@@ -40,23 +62,18 @@ class ProcessInfo:
         return self.suspicion_score >= 40
 
 
-def collect_processes(sample_cpu: bool = False) -> list[ProcessInfo]:
-    """Snapshot running processes.
-
-    If ``sample_cpu`` is True, CPU percent is measured over a short interval
-    (slower but accurate). Otherwise cumulative values are used.
-    """
+def collect_processes() -> list[ProcessInfo]:
+    """Snapshot running processes (memory-sorted, descending)."""
     procs: list[psutil.Process] = list(psutil.process_iter())
 
-    if sample_cpu:
-        for p in procs:
-            try:
-                p.cpu_percent(None)  # prime
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
-        psutil.cpu_count()  # no-op to keep import used
-        import time
-        time.sleep(0.3)
+    # Prime psutil's per-process CPU counters so the sample below is a real
+    # utilization figure rather than 0.0 (cpu_percent needs two reads).
+    for p in procs:
+        try:
+            p.cpu_percent(None)
+        except Exception:  # noqa: BLE001
+            pass
+    time.sleep(_CPU_SAMPLE_INTERVAL)
 
     result: list[ProcessInfo] = []
     ncpu = psutil.cpu_count() or 1
@@ -124,6 +141,8 @@ def collect_processes(sample_cpu: bool = False) -> list[ProcessInfo]:
 
 
 def kill_process(pid: int) -> tuple[bool, str]:
+    if dryrun.is_enabled():
+        return True, f"dry-run: would terminate PID {pid}"
     try:
         p = psutil.Process(pid)
         if p.name().lower() in PROTECTED_PROCESSES:
@@ -143,6 +162,8 @@ def kill_process(pid: int) -> tuple[bool, str]:
 
 
 def suspend_process(pid: int) -> tuple[bool, str]:
+    if dryrun.is_enabled():
+        return True, f"dry-run: would suspend PID {pid}"
     try:
         p = psutil.Process(pid)
         if p.name().lower() in PROTECTED_PROCESSES:
@@ -158,6 +179,8 @@ def suspend_process(pid: int) -> tuple[bool, str]:
 
 
 def resume_process(pid: int) -> tuple[bool, str]:
+    if dryrun.is_enabled():
+        return True, f"dry-run: would resume PID {pid}"
     try:
         p = psutil.Process(pid)
         p.resume()

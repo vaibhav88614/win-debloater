@@ -1,4 +1,5 @@
 """Suspicion-scoring heuristics (no PowerShell dependency)."""
+
 from __future__ import annotations
 
 from app.core import suspicious
@@ -6,10 +7,20 @@ from app.core.processes import ProcessInfo
 
 
 def _proc(**kw) -> ProcessInfo:
-    base = dict(pid=1234, name="x.exe", exe="", username="u",
-                cpu_percent=0.0, memory_mb=10.0, create_time=0,
-                cmdline="", status="running", num_connections=0,
-                ppid=1, is_protected=False)
+    base = dict(
+        pid=1234,
+        name="x.exe",
+        exe="",
+        username="u",
+        cpu_percent=0.0,
+        memory_mb=10.0,
+        create_time=0,
+        cmdline="",
+        status="running",
+        num_connections=0,
+        ppid=1,
+        is_protected=False,
+    )
     base.update(kw)
     return ProcessInfo(**base)
 
@@ -18,6 +29,28 @@ def test_looks_random_flags_high_entropy_names():
     assert suspicious._looks_random("a1b2c3d4e5.exe") is True
     assert suspicious._looks_random("notepad.exe") is False
     assert suspicious._looks_random("svchost.exe") is False
+
+
+def test_looks_random_spares_short_names_with_digits():
+    # Short legitimate tool names should not trip the digit heuristic.
+    assert suspicious._looks_random("7zG.exe") is False
+    assert suspicious._looks_random("ms-teams.exe") is False
+
+
+def test_looks_random_spares_long_names_with_vowel_clusters():
+    # Vowel-heavy long names should not be flagged.
+    assert suspicious._looks_random("microsoft-update-helper.exe") is False
+    assert suspicious._looks_random("BraveBrowserSetup.exe") is False
+
+
+def test_looks_random_flags_digit_heavy_names():
+    # > 40% digits over a long basename is suspicious.
+    assert suspicious._looks_random("9023871-23x.exe") is True
+
+
+def test_looks_random_flags_consonant_heavy_high_entropy():
+    # No vowels at all + long basename = looks random.
+    assert suspicious._looks_random("xkqzwbtprmvchsgld.exe") is True
 
 
 def test_in_suspicious_dir_detects_temp_paths():
@@ -48,8 +81,7 @@ def test_analyze_skips_protected_processes(monkeypatch):
     monkeypatch.setattr(suspicious, "get_autostart_targets", lambda: set())
     monkeypatch.setattr(suspicious, "get_signatures", lambda paths: {})
 
-    procs = [_proc(is_protected=True, name="svchost.exe",
-                   exe=r"C:\Users\me\Downloads\svchost.exe")]
+    procs = [_proc(is_protected=True, name="svchost.exe", exe=r"C:\Users\me\Downloads\svchost.exe")]
     out = suspicious.analyze(procs, verify_signatures=False)
     assert out[0].suspicion_score == 0
     assert out[0].reasons == []
@@ -58,12 +90,12 @@ def test_analyze_skips_protected_processes(monkeypatch):
 def test_analyze_flags_invalid_signature(monkeypatch):
     monkeypatch.setattr(suspicious, "get_autostart_targets", lambda: set())
     monkeypatch.setattr(
-        suspicious, "get_signatures",
+        suspicious,
+        "get_signatures",
         lambda paths: {r"c:\users\me\appdata\local\app\bad.exe": "NotSigned"},
     )
 
-    procs = [_proc(name="bad.exe",
-                   exe=r"C:\Users\me\AppData\Local\App\bad.exe")]
+    procs = [_proc(name="bad.exe", exe=r"C:\Users\me\AppData\Local\App\bad.exe")]
     out = suspicious.analyze(procs, verify_signatures=True)
     assert any("signature" in r.lower() for r in out[0].reasons)
     assert out[0].suspicion_score >= 35

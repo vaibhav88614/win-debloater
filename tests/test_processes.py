@@ -1,4 +1,5 @@
 """Process helpers - protections and metadata."""
+
 from __future__ import annotations
 
 import os
@@ -27,11 +28,25 @@ def test_kill_protected_process_is_rejected():
     finally:
         # Only remove if we added it (don't accidentally drop a real entry).
         if original_name not in {
-            "system", "system idle process", "registry", "smss.exe", "csrss.exe",
-            "wininit.exe", "services.exe", "lsass.exe", "winlogon.exe",
-            "fontdrvhost.exe", "dwm.exe", "svchost.exe", "explorer.exe",
-            "spoolsv.exe", "memcompression", "secure system", "lsaiso.exe",
-            "windefend", "msmpeng.exe",
+            "system",
+            "system idle process",
+            "registry",
+            "smss.exe",
+            "csrss.exe",
+            "wininit.exe",
+            "services.exe",
+            "lsass.exe",
+            "winlogon.exe",
+            "fontdrvhost.exe",
+            "dwm.exe",
+            "svchost.exe",
+            "explorer.exe",
+            "spoolsv.exe",
+            "memcompression",
+            "secure system",
+            "lsaiso.exe",
+            "windefend",
+            "msmpeng.exe",
         }:
             processes.PROTECTED_PROCESSES.discard(original_name)
 
@@ -44,7 +59,7 @@ def test_kill_nonexistent_pid_returns_error():
 
 
 def test_collect_processes_includes_self():
-    procs = processes.collect_processes(sample_cpu=False)
+    procs = processes.collect_processes()
     pids = {p.pid for p in procs}
     assert os.getpid() in pids
     me = next(p for p in procs if p.pid == os.getpid())

@@ -11,6 +11,15 @@ build/
 dist/
 *.spec.bak
 
+# Test / lint / type-check caches and coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
 # App runtime data
 *.log
 action_history.json

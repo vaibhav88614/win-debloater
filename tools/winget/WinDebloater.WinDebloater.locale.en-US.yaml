@@ -1,0 +1,19 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+PackageIdentifier: WinDebloater.WinDebloater
+PackageVersion: 1.0.0
+PackageLocale: en-US
+Publisher: WinDebloater
+PackageName: Windows Debloater & Task Control
+License: Proprietary
+ShortDescription: Remove Windows bloatware and control services, scheduled tasks, and processes.
+Description: >-
+  A PySide6 desktop utility for safely removing AppX packages, controlling
+  Windows services and scheduled tasks, and reviewing suspicious processes.
+  Includes Safe/Advanced modes, dry-run, restore points, and an undo history.
+Tags:
+  - debloat
+  - windows
+  - privacy
+  - utilities
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

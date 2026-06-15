@@ -1,0 +1,29 @@
+Copyright (c) 2026 vaibhav88614. All rights reserved.
+
+Windows Debloater & Task Control ("the Software")
+
+This software is proprietary and provided for personal use only.
+
+Permission is hereby granted to the individual obtaining a copy of the Software
+to use it for personal, non-commercial purposes, subject to the following
+conditions:
+
+1. The Software may not be sold, sublicensed, or distributed for a fee.
+2. Redistribution in source or binary form must retain this copyright notice
+   and these conditions.
+3. The Software may not be used to build a competing commercial product or
+   service without the prior written permission of the copyright holder.
+
+DISCLAIMER OF WARRANTY AND LIMITATION OF LIABILITY
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM,
+OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+The Software modifies Windows system configuration (removing apps, changing
+services and scheduled tasks, and terminating processes). You use it entirely
+at your own risk. Always review actions carefully and back up your system.

@@ -1,10 +1,8 @@
 """Action history persistence and undo dispatcher."""
+
 from __future__ import annotations
 
-import json
 from pathlib import Path
-
-import pytest
 
 from app.core import actionlog
 from app.core.actionlog import Action, ActionLog
@@ -18,8 +16,15 @@ def _fresh_log(monkeypatch, tmp_path):
 
 def test_action_log_persists_across_instances(monkeypatch, tmp_path):
     log = _fresh_log(monkeypatch, tmp_path)
-    log.add(Action(kind="appx_remove", target="Foo", summary="Removed Foo",
-                   undoable=True, undo_data={"name": "Foo"}))
+    log.add(
+        Action(
+            kind="appx_remove",
+            target="Foo",
+            summary="Removed Foo",
+            undoable=True,
+            undo_data={"name": "Foo"},
+        )
+    )
     log.add(Action(kind="appx_remove", target="Bar", summary="Removed Bar"))
 
     # Reload from disk via a new instance.
@@ -35,8 +40,7 @@ def test_action_log_undoable_filter(monkeypatch, tmp_path):
     log = _fresh_log(monkeypatch, tmp_path)
     log.add(Action(kind="appx_remove", target="A", summary="", undoable=True))
     log.add(Action(kind="appx_remove", target="B", summary="", undoable=False))
-    log.add(Action(kind="appx_remove", target="C", summary="",
-                   undoable=True, success=False))
+    log.add(Action(kind="appx_remove", target="C", summary="", undoable=True, success=False))
 
     undoable = log.undoable()
     targets = [a.target for a in undoable]
@@ -75,8 +79,14 @@ def test_action_log_recovers_from_corrupt_file(monkeypatch, tmp_path):
 
 
 def test_action_to_dict_roundtrip():
-    a = Action(kind="appx_remove", target="X", summary="s",
-               undoable=True, undo_data={"name": "X"}, success=True)
+    a = Action(
+        kind="appx_remove",
+        target="X",
+        summary="s",
+        undoable=True,
+        undo_data={"name": "X"},
+        success=True,
+    )
     b = Action.from_dict(a.to_dict())
     assert b.kind == a.kind
     assert b.target == a.target
@@ -95,15 +105,46 @@ def test_normalize_start_type_maps_known_values():
 
 
 def test_perform_undo_refuses_already_undone():
-    a = Action(kind="appx_remove", target="X", summary="",
-               undoable=True, undone=True)
+    a = Action(kind="appx_remove", target="X", summary="", undoable=True, undone=True)
     ok, msg = actionlog.perform_undo(a)
     assert not ok
     assert "cannot be undone" in msg.lower()
 
 
 def test_perform_undo_refuses_non_undoable():
-    a = Action(kind="restore_point", target="System", summary="",
-               undoable=False)
+    a = Action(kind="restore_point", target="System", summary="", undoable=False)
     ok, msg = actionlog.perform_undo(a)
     assert not ok
+
+
+def test_save_is_atomic_on_failure(monkeypatch, tmp_path):
+    """A crash mid-save must preserve the existing valid file."""
+    log = _fresh_log(monkeypatch, tmp_path)
+    # First, save a valid entry so the on-disk file has known good content.
+    a = log.add(Action(kind="appx_remove", target="Original", summary="kept", undoable=True))
+    original_text = log.path.read_text(encoding="utf-8")
+    assert "Original" in original_text
+
+    # Make json.dump raise after opening the temp file.
+    import json as _json
+
+    original_dump = _json.dump
+
+    def boom(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(_json, "dump", boom)
+
+    log._actions.append(Action(kind="appx_remove", target="Doomed", summary=""))
+    log.save()  # must not raise
+
+    # On-disk file is unchanged.
+    assert log.path.read_text(encoding="utf-8") == original_text
+    # And no leftover .tmp file.
+    leftover = log.path.with_suffix(log.path.suffix + ".tmp")
+    assert not leftover.exists()
+
+    # Restore json.dump and confirm subsequent saves succeed normally.
+    monkeypatch.setattr(_json, "dump", original_dump)
+    log.save()
+    assert "Doomed" in log.path.read_text(encoding="utf-8")

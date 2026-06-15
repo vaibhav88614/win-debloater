@@ -1,10 +1,12 @@
 """List and control Windows scheduled tasks."""
+
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 
+from app.core import dryrun
 from app.core import powershell as ps
-
 
 # Telemetry / advertising scheduled tasks commonly disabled (Safe mode).
 KNOWN_TELEMETRY_TASKS = {
@@ -24,10 +26,10 @@ KNOWN_TELEMETRY_TASKS = {
 
 @dataclass
 class TaskInfo:
-    name: str             # Task name
-    path: str             # Folder path
-    full_path: str        # path + name
-    state: str = ""       # Ready / Disabled / Running
+    name: str  # Task name
+    path: str  # Folder path
+    full_path: str  # path + name
+    state: str = ""  # Ready / Disabled / Running
     description: str = ""
     author: str = ""
     is_telemetry: bool = False
@@ -43,6 +45,8 @@ class TaskInfo:
 
 def list_tasks() -> list[TaskInfo]:
     """List scheduled tasks with their state."""
+    if sys.platform != "win32":
+        return []
     script = (
         "Get-ScheduledTask | Select-Object TaskName, TaskPath, State, "
         "@{N='Description';E={$_.Description}}, @{N='Author';E={$_.Author}}"
@@ -84,9 +88,12 @@ def _normalize_state(state: str) -> str:
 
 def set_enabled(path: str, name: str, enabled: bool) -> ps.PSResult:
     """Enable or disable a scheduled task."""
+    if dryrun.is_enabled():
+        verb = "enable" if enabled else "disable"
+        return dryrun.dry_result(f"would {verb} task '{path}{name}'")
     verb = "Enable-ScheduledTask" if enabled else "Disable-ScheduledTask"
     script = (
-        f"{verb} -TaskPath '{path}' -TaskName '{name}' -ErrorAction Stop "
-        "| Out-Null"
+        f"{verb} -TaskPath {ps.ps_quote(path)} -TaskName {ps.ps_quote(name)} "
+        "-ErrorAction Stop | Out-Null"
     )
     return ps.run(script, timeout=60)

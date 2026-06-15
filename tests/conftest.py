@@ -5,6 +5,7 @@
 - Redirects ``LOCALAPPDATA`` to a temp directory for the whole test session
   so the on-disk action log never touches the real user profile.
 """
+
 from __future__ import annotations
 
 import os
@@ -30,6 +31,18 @@ def _isolate_user_data_dir():
         try:
             yield tmp
         finally:
+            # Close rotating-log handlers so Windows releases the file before
+            # the temp directory is removed.
+            import logging
+
+            for name in ("win-debloater",):
+                logger = logging.getLogger(name)
+                for h in list(logger.handlers):
+                    try:
+                        h.close()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    logger.removeHandler(h)
             if prev is None:
                 os.environ.pop("LOCALAPPDATA", None)
             else:

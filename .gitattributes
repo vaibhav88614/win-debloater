@@ -1,0 +1,16 @@
+# Normalize line endings: LF in the repo, native on checkout.
+* text=auto eol=lf
+
+# Windows-specific scripts keep CRLF.
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary assets — never normalize or diff as text.
+*.png binary
+*.ico binary
+*.exe binary
+*.pyz binary
+
+# Collapse generated/vendored files in diffs and language stats.
+docs/img/* linguist-generated=true

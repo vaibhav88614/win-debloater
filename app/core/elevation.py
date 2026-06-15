@@ -1,9 +1,10 @@
 """Administrator privilege detection and UAC self-elevation."""
+
 from __future__ import annotations
 
 import ctypes
-import sys
 import os
+import sys
 
 
 def is_admin() -> bool:
@@ -36,9 +37,7 @@ def relaunch_as_admin() -> bool:
 
     try:
         # ShellExecuteW with the "runas" verb triggers the UAC prompt.
-        ret = ctypes.windll.shell32.ShellExecuteW(
-            None, "runas", executable, params, None, 1
-        )
+        ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", executable, params, None, 1)
         # Values > 32 indicate success.
         return int(ret) > 32
     except Exception:
