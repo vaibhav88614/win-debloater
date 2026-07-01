@@ -155,7 +155,12 @@ def run(
         out, err = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         proc.kill()
-        out, err = proc.communicate()
+        try:
+            # Bounded drain so a process that ignores kill() can't wedge the
+            # worker thread forever.
+            out, err = proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            out, err = "", ""
         _unregister(proc)
         _cancelled_pids.discard(proc.pid)
         log.warning("PS timeout after %ss: %s", timeout, preview)

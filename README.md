@@ -30,6 +30,15 @@ suspicious processes — with safety guardrails, restore points, dry-run, and un
 - **Bloatware removal** — uninstall Windows Store (AppX) apps by checkbox.
   NonRemovable packages can be force-removed (registry unlock, admin). Curated
   **presets** ("All Xbox", "Privacy starter", …) select common bundles in one click.
+  Microsoft Edge (Chromium) is uninstalled through its own `setup.exe`
+  (`Remove-AppxPackage` cannot remove it), so ticking Edge actually removes it.
+- **Installed Programs removal** — a dedicated tab for classic desktop / **MSI**
+  programs that don't appear as Store apps (e.g. the **Windows SDK** and its
+  ~40 MSI components, runtimes, and vendor tools). Reads the standard Uninstall
+  registry hives and runs each entry's uninstaller silently (`msiexec /x … /qn`
+  for MSI). Safe mode hides Windows updates and hidden system components. A
+  **group picker** selects whole suites in one click (e.g. "Windows SDK (all
+  components)", "Visual C++ Redistributables", ".NET runtimes & SDKs").
 - **Services control** — stop/start services and change startup type
   (Automatic / Manual / Disabled). Critical system services are protected.
 - **Scheduled tasks** — enable/disable tasks (telemetry/diagnostic tasks are
@@ -168,6 +177,7 @@ app/
     elevation.py       admin detection / relaunch
     powershell.py      safe PowerShell exec (cancellable) + JSON parsing
     appx.py            list/remove/restore Store apps (+ TTL cache, overlay)
+    programs.py        list/uninstall Win32/MSI programs (Add-or-Remove Programs)
     services.py        list/control services
     scheduled_tasks.py list/enable/disable tasks
     processes.py       psutil process control + CPU sampling
@@ -205,6 +215,17 @@ the UAC prompt (not `--no-elevate`) and re-check.
 Windows can re-provision some packages via Windows Update. Removing the
 provisioned copy (done automatically) reduces this, but Edge and a few system
 apps may still return.
+
+**Where is the Windows SDK / a normal desktop program?**
+Those are not Store (AppX) apps, so they live in the **Installed Programs** tab,
+not the Bloatware tab. MSI products (like the Windows SDK) are uninstalled
+silently; some third-party programs without a silent uninstaller may briefly
+show their own uninstall window.
+
+**Microsoft Edge wouldn't uninstall before.**
+Edge is uninstalled via its bundled `setup.exe --uninstall --force-uninstall`
+(the app also sets the `AllowUninstall` policy). Requires Administrator, and
+Windows Update may reinstall it later.
 
 **Restore didn't reinstall an app.**
 "Restore" re-registers an app from an on-disk manifest; if none remains,

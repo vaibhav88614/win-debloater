@@ -12,6 +12,7 @@ from app.core.paths import user_data_dir
 
 # Action kinds.
 KIND_APPX_REMOVE = "appx_remove"
+KIND_PROGRAM_UNINSTALL = "program_uninstall"
 KIND_SERVICE_STARTTYPE = "service_starttype"
 KIND_SERVICE_STATE = "service_state"
 KIND_TASK_TOGGLE = "task_toggle"

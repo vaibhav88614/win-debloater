@@ -30,6 +30,7 @@ from app.ui import theme
 from app.ui.bloatware_tab import BloatwareTab
 from app.ui.logs_tab import LogsTab
 from app.ui.processes_tab import ProcessesTab
+from app.ui.programs_tab import ProgramsTab
 from app.ui.services_tab import ServicesTab
 from app.ui.tasks_tab import TasksTab
 from app.ui.workers import FnWorker
@@ -86,11 +87,13 @@ class MainWindow(QMainWindow):
 
         self.tabs = QTabWidget()
         self.bloatware_tab = BloatwareTab(self.ctx)
+        self.programs_tab = ProgramsTab(self.ctx)
         self.services_tab = ServicesTab(self.ctx)
         self.tasks_tab = TasksTab(self.ctx)
         self.processes_tab = ProcessesTab(self.ctx)
         self.logs_tab = LogsTab(self.ctx)
         self.tabs.addTab(self.bloatware_tab, "Bloatware")
+        self.tabs.addTab(self.programs_tab, "Installed Programs")
         self.tabs.addTab(self.services_tab, "Services")
         self.tabs.addTab(self.tasks_tab, "Scheduled Tasks")
         self.tabs.addTab(self.processes_tab, "Processes & Suspicious")
@@ -178,7 +181,7 @@ class MainWindow(QMainWindow):
 
     def _on_mode_changed(self) -> None:
         # Refresh the currently visible data set when the mode changes.
-        for tab in (self.bloatware_tab, self.services_tab, self.tasks_tab):
+        for tab in (self.bloatware_tab, self.programs_tab, self.services_tab, self.tasks_tab):
             if hasattr(tab, "_populate"):
                 tab._populate()
         if self.advanced_toggle.isChecked():
@@ -538,6 +541,8 @@ class MainWindow(QMainWindow):
             self.bloatware_tab, "Ctrl+A", self.bloatware_tab._select_all_shown
         )
         self._bind_table_shortcut(self.bloatware_tab, "Delete", self.bloatware_tab._remove_selected)
+        self._bind_table_shortcut(self.programs_tab, "Ctrl+A", self.programs_tab._select_all_shown)
+        self._bind_table_shortcut(self.programs_tab, "Delete", self.programs_tab._remove_selected)
         self._bind_table_shortcut(
             self.services_tab, "Delete", lambda: self.services_tab._change_state(False)
         )
@@ -670,6 +675,7 @@ class MainWindow(QMainWindow):
 
         tabs = [
             self.bloatware_tab,
+            self.programs_tab,
             self.services_tab,
             self.tasks_tab,
             self.processes_tab,

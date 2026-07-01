@@ -27,6 +27,7 @@ def test_main_window_builds_with_all_tabs(qapp):
         names = [w.tabs.tabText(i) for i in range(w.tabs.count())]
         assert names == [
             "Bloatware",
+            "Installed Programs",
             "Services",
             "Scheduled Tasks",
             "Processes & Suspicious",

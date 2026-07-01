@@ -20,6 +20,11 @@ _PKG_FULLNAME_SUFFIX = re.compile(r"_\d+(?:\.\d+)+_[a-zA-Z0-9]+(?:_[a-zA-Z0-9]*)
 # Schema version expected in ``app/core/data/bloatware.json``.
 CATALOG_VERSION = 3
 
+# Catalog id / package name of Chromium Microsoft Edge. Edge cannot be removed
+# with ``Remove-AppxPackage`` (Windows silently blocks it); it must be removed
+# with its bundled ``setup.exe --uninstall`` installer instead.
+EDGE_STABLE_ID = "Microsoft.MicrosoftEdge.Stable"
+
 # Short-lived cache for ``list_installed`` so re-entering the tab is instant.
 # Mutations (remove/restore) call ``invalidate_cache`` to force a refresh.
 _LIST_CACHE_TTL = 10.0
@@ -275,6 +280,75 @@ def list_installed(include_all_users: bool = True, *, force: bool = False) -> li
     return result
 
 
+def is_edge_chromium(pkg: AppxPackage) -> bool:
+    """True when ``pkg`` is the Chromium Microsoft Edge browser package."""
+    ident = (pkg.catalog_id or pkg.name or "").lower()
+    return ident == EDGE_STABLE_ID.lower()
+
+
+def remove_edge_chromium(*, deprovision: bool = True, timeout: int = 300) -> ps.PSResult:
+    """Uninstall Chromium Microsoft Edge via its bundled ``setup.exe``.
+
+    ``Remove-AppxPackage`` does not actually uninstall Edge — Windows blocks it.
+    The supported removal path is Edge's own installer run with
+    ``--uninstall --force-uninstall``. We also set the ``AllowUninstall`` policy
+    (some builds refuse to uninstall otherwise) and deprovision the AppX entry so
+    the Store listing disappears. Requires Administrator.
+    """
+    if dryrun.is_enabled():
+        return dryrun.dry_result("would uninstall Microsoft Edge (Chromium) via setup.exe")
+
+    invalidate_cache()
+    # Run Edge's setup.exe for every installed version folder found under both
+    # Program Files roots. Return the highest (worst) setup exit code seen.
+    script = r"""
+$ErrorActionPreference = 'SilentlyContinue'
+# Some builds block Edge removal unless this policy is present.
+$pol = 'HKLM:\SOFTWARE\Policies\Microsoft\EdgeUpdate'
+if (-not (Test-Path $pol)) { New-Item -Path $pol -Force | Out-Null }
+New-ItemProperty -Path $pol -Name 'AllowUninstall' -PropertyType DWord -Value 1 -Force | Out-Null
+
+$roots = @(
+    (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application'),
+    (Join-Path $env:ProgramFiles 'Microsoft\Edge\Application')
+)
+$ran = $false
+$worst = 0
+foreach ($root in $roots) {
+    if (-not (Test-Path $root)) { continue }
+    Get-ChildItem -Path $root -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^\d+\.' } | ForEach-Object {
+            $setup = Join-Path $_.FullName 'Installer\setup.exe'
+            if (Test-Path $setup) {
+                $ran = $true
+                $p = Start-Process -FilePath $setup -ArgumentList @(
+                    '--uninstall', '--system-level', '--verbose-logging', '--force-uninstall'
+                ) -Wait -PassThru -WindowStyle Hidden
+                if ($p.ExitCode -ne 0) { $worst = $p.ExitCode }
+                Write-Output ("setup.exe ({0}) exit={1}" -f $_.Name, $p.ExitCode)
+            }
+        }
+}
+if (-not $ran) { Write-Output 'Edge setup.exe was not found; nothing to uninstall.' }
+exit $worst
+"""
+    res = ps.run(script, timeout=timeout)
+
+    if deprovision:
+        deprov = ps.run(
+            "Get-AppxProvisionedPackage -Online | "
+            "Where-Object { $_.DisplayName -like 'Microsoft.MicrosoftEdge*' } | "
+            "Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue",
+            timeout=120,
+        )
+        if deprov.stdout.strip():
+            res.stdout = (res.stdout + "\n" + deprov.stdout).strip()
+
+    if res.ok and not res.stdout.strip():
+        res.stdout = "Edge uninstall completed."
+    return res
+
+
 def remove_package(
     pkg: AppxPackage,
     *,
@@ -289,10 +363,16 @@ def remove_package(
     full-name remove, or deprovision for a previously installed package).
 
     For ``NonRemovable`` packages the registry lock is cleared first
-    (requires Administrator).
+    (requires Administrator). Chromium Edge is special-cased to its own
+    ``setup.exe`` uninstaller because ``Remove-AppxPackage`` cannot remove it.
     """
     if dryrun.is_enabled():
         return dryrun.dry_result(f"would remove AppX package '{pkg.name}'")
+
+    # Chromium Edge ignores Remove-AppxPackage; route it to the real uninstaller
+    # so removal actually happens (and the batch doesn't stack failed timeouts).
+    if is_edge_chromium(pkg):
+        return remove_edge_chromium(deprovision=deprovision)
 
     # Real removal invalidates any cached listing.
     invalidate_cache()

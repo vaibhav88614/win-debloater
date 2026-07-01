@@ -157,6 +157,79 @@ def test_remove_package_overall_fails_if_all_removals_fail(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Chromium Edge special-case removal
+# ---------------------------------------------------------------------------
+
+
+def test_is_edge_chromium_detects_by_name_and_catalog_id():
+    assert appx.is_edge_chromium(
+        appx.AppxPackage(name="Microsoft.MicrosoftEdge.Stable", full_name="")
+    )
+    assert appx.is_edge_chromium(
+        appx.AppxPackage(name="Whatever", full_name="", catalog_id="Microsoft.MicrosoftEdge.Stable")
+    )
+    assert not appx.is_edge_chromium(appx.AppxPackage(name="Microsoft.BingNews", full_name=""))
+
+
+def test_remove_package_routes_edge_to_setup_uninstaller(monkeypatch):
+    called = {"edge": 0, "appx": 0}
+
+    def fake_edge(*, deprovision=True):
+        called["edge"] += 1
+        from app.core import powershell as ps
+
+        return ps.PSResult(ok=True, returncode=0, stdout="edge removed")
+
+    from app.core import powershell as ps
+
+    monkeypatch.setattr(appx, "remove_edge_chromium", fake_edge)
+    monkeypatch.setattr(
+        ps,
+        "run",
+        lambda *a, **k: (
+            called.__setitem__("appx", called["appx"] + 1) or ps.PSResult(ok=True, returncode=0)
+        ),
+    )
+
+    pkg = appx.AppxPackage(name="Microsoft.MicrosoftEdge.Stable", full_name="x_1_x64__y")
+    res = appx.remove_package(pkg)
+    assert res.ok
+    assert called["edge"] == 1
+    # The generic AppX removal steps must NOT run for Edge.
+    assert called["appx"] == 0
+
+
+def test_remove_edge_chromium_dry_run(monkeypatch):
+    from app.core import dryrun
+
+    dryrun.set_enabled(True)
+    try:
+        res = appx.remove_edge_chromium()
+        assert res.ok
+        assert dryrun.DRY_RUN_MARKER in res.stdout
+    finally:
+        dryrun.set_enabled(False)
+
+
+def test_remove_edge_chromium_runs_setup_and_deprovisions(monkeypatch):
+    from app.core import powershell as ps
+
+    scripts: list[str] = []
+
+    def fake_run(script, *, timeout=120):
+        scripts.append(script)
+        return ps.PSResult(ok=True, returncode=0, stdout="setup.exe (149) exit=0")
+
+    monkeypatch.setattr(ps, "run", fake_run)
+    res = appx.remove_edge_chromium(deprovision=True)
+    assert res.ok
+    joined = "\n".join(scripts)
+    assert "setup.exe" in joined
+    assert "--force-uninstall" in joined
+    assert "Remove-AppxProvisionedPackage" in joined
+
+
+# ---------------------------------------------------------------------------
 # Provisioned-package merging (A7)
 # ---------------------------------------------------------------------------
 
