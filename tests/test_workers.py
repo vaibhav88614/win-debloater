@@ -101,3 +101,35 @@ def test_batch_worker_cancel_stops_iteration(qapp):
     w.wait(3000)
 
     assert summary == {"success": 0, "total": 10}
+
+
+def test_batch_worker_logs_per_item_progress(qapp, caplog):
+    """Every item start/end must land in the log at INFO so a stuck run is
+    diagnosable without waiting for the batch to finish."""
+    items = ["alpha", "beta"]
+
+    def action(item):
+        return True, f"processed {item}"
+
+    caplog.set_level("INFO", logger="win-debloater")
+
+    w = BatchWorker(items, action)
+    loop = QEventLoop()
+    w.finished_all.connect(lambda *_: loop.quit())
+    QTimer.singleShot(5000, loop.quit)
+    w.start()
+    loop.exec()
+    w.wait(3000)
+
+    messages = [r.getMessage() for r in caplog.records]
+    # Batch summary bookends.
+    assert any("BatchWorker: starting 2 item" in m for m in messages), messages
+    assert any("BatchWorker: finished 2/2" in m for m in messages), messages
+    # Per-item start markers, so a stuck item is immediately obvious.
+    # Strings don't have display_name/name, so BatchWorker falls back to
+    # repr() -> label like "'alpha'" (which is fine and unambiguous in logs).
+    assert any("[1/2] starting: 'alpha'" in m for m in messages), messages
+    assert any("[2/2] starting: 'beta'" in m for m in messages), messages
+    # Per-item outcome markers include OK/FAIL + elapsed for eyeball triage.
+    assert any("[1/2] OK: 'alpha'" in m for m in messages), messages
+    assert any("[2/2] OK: 'beta'" in m for m in messages), messages

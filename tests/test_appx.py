@@ -60,7 +60,9 @@ def test_appx_package_display_name_prefers_friendly():
 def _fake_run_factory(calls, results):
     """Build a fake ps.run that records each script and returns scripted results."""
 
-    def fake_run(script, *, timeout=60):
+    def fake_run(script, *, timeout=60, **_kwargs):
+        # Accept and ignore any extra kwargs (e.g. label) so this fake stays
+        # compatible with future signature additions to ps.run.
         calls.append(script)
         # Use a result for each call in order, last result if we run out.
         idx = min(len(calls) - 1, len(results) - 1)
@@ -131,7 +133,7 @@ def test_remove_package_overall_ok_if_any_removal_succeeds(monkeypatch):
     calls: list[str] = []
     results = [fail, ok, fail]
 
-    def fake_run(script, *, timeout=60):
+    def fake_run(script, *, timeout=60, **_kwargs):
         calls.append(script)
         return results[len(calls) - 1]
 
@@ -216,7 +218,7 @@ def test_remove_edge_chromium_runs_setup_and_deprovisions(monkeypatch):
 
     scripts: list[str] = []
 
-    def fake_run(script, *, timeout=120):
+    def fake_run(script, *, timeout=120, **_kwargs):
         scripts.append(script)
         return ps.PSResult(ok=True, returncode=0, stdout="setup.exe (149) exit=0")
 
@@ -224,6 +226,10 @@ def test_remove_edge_chromium_runs_setup_and_deprovisions(monkeypatch):
     res = appx.remove_edge_chromium(deprovision=True)
     assert res.ok
     joined = "\n".join(scripts)
+    # Combined across all staged calls we expect policy set, processes
+    # killed, setup.exe invoked, and the provisioned entry removed.
+    assert "AllowUninstall" in joined
+    assert "Stop-Process" in joined
     assert "setup.exe" in joined
     assert "--force-uninstall" in joined
     assert "Remove-AppxProvisionedPackage" in joined
@@ -239,24 +245,30 @@ def test_remove_edge_chromium_writes_correct_policy_and_kills_processes(monkeypa
 
     scripts: list[str] = []
 
-    def fake_run(script, *, timeout=120):
+    def fake_run(script, *, timeout=120, **_kwargs):
         scripts.append(script)
         return ps.PSResult(ok=True, returncode=0, stdout="setup.exe (149) exit=0")
 
     monkeypatch.setattr(ps, "run", fake_run)
     appx.remove_edge_chromium(deprovision=False)
 
-    setup_script = scripts[0]
-    assert "SOFTWARE\\Microsoft\\EdgeUpdateDev" in setup_script
-    assert "WOW6432Node\\Microsoft\\EdgeUpdateDev" in setup_script
-    assert "AllowUninstall" in setup_script
-    # Kill-processes step must appear *before* the setup.exe invocation.
-    assert "Stop-Process" in setup_script
+    # Phase 1 script must set AllowUninstall under the real key + WOW6432Node.
+    policy_script = scripts[0]
+    assert "SOFTWARE\\Microsoft\\EdgeUpdateDev" in policy_script
+    assert "WOW6432Node\\Microsoft\\EdgeUpdateDev" in policy_script
+    assert "AllowUninstall" in policy_script
+
+    # Phase 2 script must kill the processes that would otherwise hold
+    # Edge files open.
+    kill_script = scripts[1]
+    assert "Stop-Process" in kill_script
     for proc in ("msedge", "MicrosoftEdgeUpdate", "msedgewebview2"):
-        assert proc in setup_script
-    # Compare against Start-Process (the real invocation), not the string
-    # "setup.exe" which appears earlier in explanatory comments.
-    assert setup_script.index("Stop-Process") < setup_script.index("Start-Process")
+        assert proc in kill_script
+
+    # Phase 3 script must actually invoke setup.exe.
+    setup_script = scripts[2]
+    assert "Start-Process" in setup_script
+    assert "--force-uninstall" in setup_script
 
 
 def test_remove_edge_chromium_reports_exit_93_clearly(monkeypatch):
@@ -265,9 +277,9 @@ def test_remove_edge_chromium_reports_exit_93_clearly(monkeypatch):
     """
     from app.core import powershell as ps
 
-    def fake_run(script, *, timeout=120):
-        # First call: setup.exe returns 93. Deprovision call returns success.
-        if "setup.exe" in script:
+    def fake_run(script, *, timeout=120, **_kwargs):
+        # The setup.exe phase returns 93; policy/kill/deprovision succeed.
+        if "Start-Process" in script and "setup.exe" in script.lower():
             return ps.PSResult(
                 ok=False,
                 returncode=appx.EDGE_EXIT_BLOCKED,
@@ -305,7 +317,7 @@ def test_remove_package_translates_os_protected_failure(monkeypatch):
     """
     from app.core import powershell as ps
 
-    def fake_run(script, *, timeout=60):
+    def fake_run(script, *, timeout=60, **_kwargs):
         return ps.PSResult(
             ok=False,
             returncode=1,
@@ -334,7 +346,7 @@ def test_remove_package_generic_failure_keeps_stderr(monkeypatch):
     (so we don't lose real error text for unrelated problems)."""
     from app.core import powershell as ps
 
-    def fake_run(script, *, timeout=60):
+    def fake_run(script, *, timeout=60, **_kwargs):
         return ps.PSResult(
             ok=False,
             returncode=1,

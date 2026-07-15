@@ -200,3 +200,67 @@ def test_cancel_active_kills_registered_procs():
     finally:
         ps._unregister(fp)
         ps._cancelled_pids.discard(fp.pid)
+
+
+# ---------------------------------------------------------------------------
+# Observability / debug logging
+# ---------------------------------------------------------------------------
+
+
+def _fake_immediate_proc(monkeypatch, stdout: str = "", stderr: str = "", rc: int = 0):
+    """Install a subprocess.Popen fake that returns instantly with the given
+    stdout/stderr/returncode. Used to assert on logging behaviour."""
+    import subprocess
+
+    class _Proc:
+        pid = 42
+
+        def __init__(self):
+            self.returncode = rc
+
+        def communicate(self, timeout=None):
+            return (stdout, stderr)
+
+        def kill(self):
+            self.returncode = -1
+
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: _Proc())
+
+
+def test_run_logs_starting_and_finish_at_info_when_label_given(monkeypatch, caplog):
+    """With a `label=` set, run() must emit an INFO 'starting' line before the
+    call and an INFO 'rc=' line after — so user-triggered ops are visible in
+    the default log without flipping to DEBUG."""
+    _fake_immediate_proc(monkeypatch, stdout="ok")
+    caplog.set_level("INFO", logger="win-debloater")
+
+    ps.run("Get-Something", timeout=5, label="my-step")
+
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("PS starting" in m and "[my-step]" in m for m in messages), messages
+    assert any("PS rc=0" in m and "[my-step]" in m for m in messages), messages
+
+
+def test_run_without_label_stays_quiet_at_info(monkeypatch, caplog):
+    """No label -> internal chatter (e.g. list queries) stays at DEBUG so the
+    INFO log doesn't get spammed with every background poll."""
+    _fake_immediate_proc(monkeypatch, stdout="ok")
+    caplog.set_level("INFO", logger="win-debloater")
+
+    ps.run("Get-Something", timeout=5)
+
+    messages = [r.getMessage() for r in caplog.records]
+    assert not any("PS starting" in m for m in messages), messages
+    assert not any("PS rc=0" in m for m in messages), messages
+
+
+def test_run_failure_always_warns_regardless_of_label(monkeypatch, caplog):
+    """A non-zero rc must always land in the log at WARNING level so failures
+    are never invisible, even for unlabeled internal calls."""
+    _fake_immediate_proc(monkeypatch, stderr="boom", rc=1)
+    caplog.set_level("INFO", logger="win-debloater")
+
+    ps.run("Something-Broken", timeout=5)
+
+    warn_messages = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any("PS rc=1" in m for m in warn_messages), warn_messages

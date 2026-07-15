@@ -47,3 +47,22 @@ def _isolate_user_data_dir():
                 os.environ.pop("LOCALAPPDATA", None)
             else:
                 os.environ["LOCALAPPDATA"] = prev
+
+
+@pytest.fixture(autouse=True)
+def _propagate_app_logger():
+    """Enable log propagation on the ``win-debloater`` logger for the duration
+    of each test. The production code sets ``propagate = False`` so records
+    don't double-log in the frozen app, but pytest's ``caplog`` attaches its
+    handler to the *root* logger — so without propagation, tests can't inspect
+    what our modules log. Restore the original value afterwards.
+    """
+    import logging
+
+    logger = logging.getLogger("win-debloater")
+    prev = logger.propagate
+    logger.propagate = True
+    try:
+        yield
+    finally:
+        logger.propagate = prev

@@ -144,6 +144,15 @@ embedded `requireAdministrator` manifest, so double-clicking it triggers a UAC
 prompt automatically. The build keeps `console=True` so logs are visible while
 debugging.
 
+### Troubleshooting the build
+
+- **`WARNING: Execution of 'set_exe_build_timestamp' failed on attempt #1 / 20: PermissionError(13, 'Permission denied')`** — PyInstaller could not update the timestamp of `dist\WinDebloater.exe` because *something else has a handle open on that file*. The retry loop usually succeeds within a few attempts, but if it doesn't, the culprit is almost always one of:
+  1. **A previous `WinDebloater.exe` is still running** (very common — check Task Manager for `WinDebloater.exe`, kill it, then rebuild).
+  2. **Windows Defender real-time protection** is scanning the freshly-written exe. Either wait a few seconds and rebuild, or add `V:\temp\win-debloater\dist\` to the Defender exclusion list for development.
+  3. **Explorer / an antivirus** is generating a thumbnail or hash. Close any Explorer window showing `dist\`.
+  4. **A file lock from the previous build** was not released. Try `rmdir /s /q build dist` and rebuild.
+- **Build succeeds despite the warning?** You can ignore it — PyInstaller only warns; the timestamp gets set on a later retry. The final `WinDebloater.exe` is functionally identical.
+
 ## Development
 
 ```powershell

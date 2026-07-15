@@ -300,6 +300,13 @@ def is_edge_chromium(pkg: AppxPackage) -> bool:
     return ident == EDGE_STABLE_ID.lower()
 
 
+def _log():
+    """Local helper; the applog module is imported lazily to avoid cycles."""
+    from app.core.applog import get_logger
+
+    return get_logger()
+
+
 def remove_edge_chromium(*, deprovision: bool = True, timeout: int = 300) -> ps.PSResult:
     """Uninstall Chromium Microsoft Edge via its bundled ``setup.exe``.
 
@@ -325,15 +332,16 @@ def remove_edge_chromium(*, deprovision: bool = True, timeout: int = 300) -> ps.
     if dryrun.is_enabled():
         return dryrun.dry_result("would uninstall Microsoft Edge (Chromium) via setup.exe")
 
+    log = _log()
+    log.info("Edge uninstall: starting (deprovision=%s, timeout=%ss)", deprovision, timeout)
     invalidate_cache()
-    # Run Edge's setup.exe for every installed version folder found under both
-    # Program Files roots. Return the highest (worst) setup exit code seen.
-    script = r"""
-$ErrorActionPreference = 'SilentlyContinue'
 
-# 1) Set AllowUninstall in the location Edge's setup.exe actually reads.
-#    (The Policies\Microsoft\EdgeUpdate key used to be checked but is
-#    ignored on Windows 11 22H2+; EdgeUpdateDev is the correct one.)
+    # Phase 1: Set AllowUninstall policy where setup.exe actually reads it.
+    # Fast (< 1s); split out so any registry failure is attributable.
+    policy_script = r"""
+$ErrorActionPreference = 'SilentlyContinue'
+# The Policies\Microsoft\EdgeUpdate key used to be checked but is ignored on
+# Windows 11 22H2+; EdgeUpdateDev is the one setup.exe actually reads.
 $policyKeys = @(
     'HKLM:\SOFTWARE\Microsoft\EdgeUpdateDev',
     'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdateDev',
@@ -344,16 +352,37 @@ foreach ($k in $policyKeys) {
     New-ItemProperty -Path $k -Name 'AllowUninstall' -PropertyType DWord `
         -Value 1 -Force | Out-Null
 }
+Write-Output 'edge: AllowUninstall policy set'
+"""
+    log.info("Edge uninstall [1/3]: setting AllowUninstall policy…")
+    ps.run(policy_script, timeout=30, label="edge:policy")
 
-# 2) Close anything that would hold Edge files/policies open. Without this
-#    step setup.exe refuses to run and returns exit code 93 immediately.
+    # Phase 2: Close anything that would hold Edge files/policies open.
+    # Without this step setup.exe refuses to run and returns exit code 93.
+    kill_script = r"""
+$ErrorActionPreference = 'SilentlyContinue'
 $procs = @('msedge', 'MicrosoftEdgeUpdate', 'msedgewebview2', 'identity_helper')
+$killed = @()
 foreach ($name in $procs) {
-    Get-Process -Name $name -ErrorAction SilentlyContinue |
-        Stop-Process -Force -ErrorAction SilentlyContinue
+    $found = Get-Process -Name $name -ErrorAction SilentlyContinue
+    if ($found) {
+        $killed += ("{0} x{1}" -f $name, $found.Count)
+        $found | Stop-Process -Force -ErrorAction SilentlyContinue
+    }
 }
+if ($killed.Count -gt 0) {
+    Write-Output ("edge: killed processes: " + ($killed -join ', '))
+} else {
+    Write-Output 'edge: no Edge processes were running'
+}
+"""
+    log.info("Edge uninstall [2/3]: killing Edge/EdgeUpdate/WebView2 processes…")
+    ps.run(kill_script, timeout=30, label="edge:kill")
 
-# 3) Invoke setup.exe under every installed Edge version folder.
+    # Phase 3: Invoke setup.exe under every installed Edge version folder.
+    # This is the slow step (setup.exe itself takes tens of seconds).
+    setup_script = r"""
+$ErrorActionPreference = 'SilentlyContinue'
 $roots = @(
     (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application'),
     (Join-Path $env:ProgramFiles 'Microsoft\Edge\Application')
@@ -367,6 +396,7 @@ foreach ($root in $roots) {
             $setup = Join-Path $_.FullName 'Installer\setup.exe'
             if (Test-Path $setup) {
                 $ran = $true
+                Write-Output ("edge: invoking setup.exe for version {0}" -f $_.Name)
                 $p = Start-Process -FilePath $setup -ArgumentList @(
                     '--uninstall',
                     '--system-level',
@@ -380,10 +410,17 @@ foreach ($root in $roots) {
             }
         }
 }
-if (-not $ran) { Write-Output 'Edge setup.exe was not found; nothing to uninstall.' }
+if (-not $ran) { Write-Output 'edge: setup.exe was not found; nothing to uninstall.' }
 exit $worst
 """
-    res = ps.run(script, timeout=timeout)
+    log.info("Edge uninstall [3/3]: invoking setup.exe --force-uninstall (may take minutes)…")
+    res = ps.run(setup_script, timeout=timeout, label="edge:setup")
+    log.info(
+        "Edge uninstall: setup.exe returned rc=%s (ok=%s). stdout=%r",
+        res.returncode,
+        res.ok,
+        res.stdout.strip(),
+    )
 
     # Translate the "uninstall was blocked" exit code into something useful.
     if res.returncode == EDGE_EXIT_BLOCKED:
@@ -398,17 +435,20 @@ exit $worst
         )
 
     if deprovision:
+        log.info("Edge uninstall: deprovisioning AppX entry…")
         deprov = ps.run(
             "Get-AppxProvisionedPackage -Online | "
             "Where-Object { $_.DisplayName -like 'Microsoft.MicrosoftEdge*' } | "
             "Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue",
             timeout=120,
+            label="edge:deprovision",
         )
         if deprov.stdout.strip():
             res.stdout = (res.stdout + "\n" + deprov.stdout).strip()
 
     if res.ok and not res.stdout.strip():
         res.stdout = "Edge uninstall completed."
+    log.info("Edge uninstall: done (ok=%s)", res.ok)
     return res
 
 
@@ -437,6 +477,16 @@ def remove_package(
     if is_edge_chromium(pkg):
         return remove_edge_chromium(deprovision=deprovision)
 
+    log = _log()
+    log.info(
+        "Removing AppX '%s' (full_name=%s, non_removable=%s, all_users=%s, deprovision=%s)",
+        pkg.name,
+        pkg.full_name or "-",
+        pkg.is_non_removable,
+        all_users,
+        deprovision,
+    )
+
     # Real removal invalidates any cached listing.
     invalidate_cache()
     scope = "-AllUsers" if all_users else ""
@@ -457,9 +507,15 @@ def remove_package(
             "  }"
             "}"
         )
-        steps.append(("unlock", ps.run(unlock, timeout=60)))
+        log.info("  Step 1/N: unlock NonRemovable registry for '%s'", pkg.name)
+        steps.append(("unlock", ps.run(unlock, timeout=60, label=f"unlock {pkg.name}")))
 
     # ---- Remove for installed users ----
+    log.info(
+        "  Step: Remove-AppxPackage -Name '%s' (scope=%s, timeout=180s)",
+        pkg.name,
+        scope or "current-user",
+    )
     steps.append(
         (
             "remove-by-name",
@@ -467,11 +523,13 @@ def remove_package(
                 f"Get-AppxPackage {scope} -Name {name_q} | "
                 "Remove-AppxPackage -ErrorAction SilentlyContinue",
                 timeout=180,
+                label=f"remove-by-name {pkg.name}",
             ),
         )
     )
 
     if pkg.full_name:
+        log.info("  Step: Remove-AppxPackage -Package '%s' (timeout=180s)", pkg.full_name)
         steps.append(
             (
                 "remove-by-fullname",
@@ -479,12 +537,14 @@ def remove_package(
                     f"Remove-AppxPackage {scope} -Package {ps.ps_quote(pkg.full_name)} "
                     "-ErrorAction SilentlyContinue",
                     timeout=180,
+                    label=f"remove-by-fullname {pkg.name}",
                 ),
             )
         )
 
     # ---- Deprovision (prevents re-install for new users / Windows Update) ----
     if deprovision:
+        log.info("  Step: Remove-AppxProvisionedPackage '%s' (timeout=180s)", pkg.name)
         steps.append(
             (
                 "deprovision",
@@ -493,13 +553,21 @@ def remove_package(
                     f"Where-Object {{ $_.DisplayName -eq {name_q} }} | "
                     "Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue",
                     timeout=180,
+                    label=f"deprovision {pkg.name}",
                 ),
             )
         )
 
     # Aggregate: succeed if any removal/deprovision step ran without error.
-    removal_steps = [r for label, r in steps if label != "unlock"]
+    removal_steps = [r for lbl, r in steps if lbl != "unlock"]
     overall_ok = any(r.ok for r in removal_steps)
+
+    log.info(
+        "AppX '%s' step summary: %s -> overall=%s",
+        pkg.name,
+        ", ".join(f"{lbl}={'OK' if r.ok else f'FAIL(rc={r.returncode})'}" for lbl, r in steps),
+        "OK" if overall_ok else "FAIL",
+    )
     combined_stdout = "\n".join(r.stdout.strip() for _, r in steps if r.stdout and r.stdout.strip())
     combined_stderr = "\n".join(r.stderr.strip() for _, r in steps if r.stderr and r.stderr.strip())
 
