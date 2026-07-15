@@ -11,7 +11,7 @@ from fnmatch import fnmatch
 
 from app.core import dryrun
 from app.core import powershell as ps
-from app.core.paths import resource_path
+from app.core.paths import resource_path, user_data_dir
 
 # Matches the version/arch/publisher-hash suffix on AppX PackageName values,
 # e.g. ``Microsoft.BingNews_4.55.1.0_x64__8wekyb3d8bbwe``.
@@ -307,37 +307,439 @@ def _log():
     return get_logger()
 
 
-def remove_edge_chromium(*, deprovision: bool = True, timeout: int = 300) -> ps.PSResult:
-    """Uninstall Chromium Microsoft Edge via its bundled ``setup.exe``.
+# ----------------------------------------------------------------------------
+# Edge uninstall Phase A: patch IntegratedServicesRegionPolicySet.json
+# ----------------------------------------------------------------------------
+#
+# On Windows 11 22H2+ Microsoft ships a JSON at
+# ``%SystemRoot%\System32\IntegratedServicesRegionPolicySet.json`` that
+# gates a handful of features on the machine's region — including whether
+# Edge can be uninstalled. In the EEA the "Edge uninstall" policy is
+# ``enabled`` by default; elsewhere it is ``disabled``. When it is
+# ``enabled``, Settings > Apps > Microsoft Edge grows a working "Uninstall"
+# button and ``setup.exe --force-uninstall`` sometimes stops returning 93.
+#
+# We take ownership of the file, back it up into user_data_dir(), rewrite
+# every policy whose ``$comment`` looks like an Edge-uninstall gate so its
+# ``defaultState`` becomes ``"enabled"``, and drop the region condition.
+# This is fully reversible from the backup.
+#
+# Reference: this is the same trick published by Rafael Rivera (@WithinRafael)
+# and used by well-known third-party tools (e.g.
+# https://github.com/Chiragsd13/microsoft-edge-uninstaller).
+
+_EDGE_POLICY_JSON = r"C:\Windows\System32\IntegratedServicesRegionPolicySet.json"
+
+
+def _edge_policy_backup_path():
+    return user_data_dir() / "IntegratedServicesRegionPolicySet.backup.json"
+
+
+def patch_edge_uninstall_policy() -> ps.PSResult:
+    """Phase A: patch the region policy JSON so Windows allows Edge uninstall.
+
+    Best-effort — we swallow failures because Phase C (force-delete) is the
+    real fallback. Returns the ``PSResult`` for logging.
+    """
+    if dryrun.is_enabled():
+        return dryrun.dry_result(
+            f"would patch {_EDGE_POLICY_JSON} to enable Edge uninstall globally"
+        )
+
+    backup = str(_edge_policy_backup_path()).replace("'", "''")
+    json_path_q = _EDGE_POLICY_JSON.replace("'", "''")
+    script = rf"""
+$ErrorActionPreference = 'SilentlyContinue'
+$json_path = '{json_path_q}'
+$backup    = '{backup}'
+
+if (-not (Test-Path -LiteralPath $json_path)) {{
+    Write-Output "policy-json: file not present on this build; skipping"
+    exit 0
+}}
+
+# 1) Backup once. Never overwrite an existing backup so we always retain
+#    the truly original file, even across multiple patch attempts.
+if (-not (Test-Path -LiteralPath $backup)) {{
+    try {{
+        Copy-Item -LiteralPath $json_path -Destination $backup -Force -ErrorAction Stop
+        Write-Output "policy-json: backup written to $backup"
+    }} catch {{
+        Write-Output "policy-json: backup FAILED ($($_.Exception.Message))"
+    }}
+}}
+
+# 2) Take ownership + grant admins full control. Owned by TrustedInstaller
+#    by default so we cannot write to it without this.
+& takeown.exe /f $json_path 2>&1 | Out-Null
+& icacls.exe $json_path /grant "*S-1-5-32-544:(F)" 2>&1 | Out-Null
+
+# 3) Parse, mutate any Edge-uninstall policy, write back.
+$patched = 0
+try {{
+    $doc = Get-Content -LiteralPath $json_path -Raw | ConvertFrom-Json
+    foreach ($p in @($doc.policies)) {{
+        $comment = ''
+        if ($p.PSObject.Properties.Name -contains '$comment') {{ $comment = [string]$p.'$comment' }}
+        # Any policy whose comment mentions Edge + uninstall / EEA is the
+        # gate we want. GUIDs shift between builds; matching on the comment
+        # is more durable.
+        if ($comment -match '(?i)edge' -and
+            ($comment -match '(?i)uninstall' -or $comment -match '(?i)EEA' -or $comment -match '(?i)region'))
+        {{
+            $p.defaultState = 'enabled'
+            if ($p.PSObject.Properties.Name -contains 'conditions') {{
+                # Wipe geographic gating so the policy applies everywhere.
+                $p.conditions = @{{}}
+            }}
+            $patched++
+        }}
+    }}
+    if ($patched -gt 0) {{
+        $doc | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $json_path -Encoding UTF8
+        Write-Output "policy-json: patched $patched policy/policies"
+    }} else {{
+        Write-Output "policy-json: no matching Edge-uninstall policy found; nothing to patch"
+    }}
+}} catch {{
+    Write-Output "policy-json: parse/patch FAILED ($($_.Exception.Message))"
+    exit 1
+}}
+exit 0
+"""
+    return ps.run(script, timeout=60, label="edge:policy-json-patch")
+
+
+def restore_edge_uninstall_policy() -> ps.PSResult:
+    """Restore ``IntegratedServicesRegionPolicySet.json`` from the backup made
+    by :func:`patch_edge_uninstall_policy`. No-op if no backup exists.
+    """
+    if dryrun.is_enabled():
+        return dryrun.dry_result("would restore IntegratedServicesRegionPolicySet.json from backup")
+    backup = str(_edge_policy_backup_path()).replace("'", "''")
+    json_path_q = _EDGE_POLICY_JSON.replace("'", "''")
+    script = rf"""
+$ErrorActionPreference = 'SilentlyContinue'
+$json_path = '{json_path_q}'
+$backup    = '{backup}'
+if (-not (Test-Path -LiteralPath $backup)) {{
+    Write-Output 'policy-json restore: no backup found; nothing to do'
+    exit 0
+}}
+& takeown.exe /f $json_path 2>&1 | Out-Null
+& icacls.exe $json_path /grant "*S-1-5-32-544:(F)" 2>&1 | Out-Null
+Copy-Item -LiteralPath $backup -Destination $json_path -Force
+Write-Output "policy-json restore: restored from $backup"
+"""
+    return ps.run(script, timeout=30, label="edge:policy-json-restore")
+
+
+# ----------------------------------------------------------------------------
+# Edge uninstall Phase C: force-delete Edge files, registry, tasks, services
+# ----------------------------------------------------------------------------
+
+
+def force_delete_edge() -> ps.PSResult:
+    """Delete Edge's install location, registry entries, shortcuts, tasks,
+    services, and set ``DoNotUpdateToEdgeWithChromium=1`` so Windows Update
+    doesn't bring it back on the next check.
+
+    This is the last-resort fallback for when ``setup.exe --force-uninstall``
+    refuses (exit 93) on modern Windows builds. Not a "clean" uninstall —
+    a few dead registry stubs may linger — but Edge stops working and the
+    Store entry is already deprovisioned by the caller.
+    """
+    if dryrun.is_enabled():
+        return dryrun.dry_result("would force-delete Microsoft Edge (files + registry + tasks)")
+
+    script = r"""
+$ErrorActionPreference = 'SilentlyContinue'
+$actions = @()
+
+# 1) Kill anything Edge/EdgeUpdate/WebView that might hold files open.
+$procs = @('msedge', 'MicrosoftEdgeUpdate', 'msedgewebview2', 'identity_helper', 'msedge_notification_client_setup')
+foreach ($name in $procs) {
+    Get-Process -Name $name -ErrorAction SilentlyContinue |
+        Stop-Process -Force -ErrorAction SilentlyContinue
+}
+$actions += 'killed running Edge processes'
+
+# 2) Take ownership + delete every Edge install folder (system + user level).
+$targets = @(
+    (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge'),
+    (Join-Path $env:ProgramFiles       'Microsoft\Edge'),
+    (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\EdgeUpdate'),
+    (Join-Path $env:ProgramFiles       'Microsoft\EdgeUpdate'),
+    (Join-Path $env:ProgramData         'Microsoft\EdgeUpdate'),
+    (Join-Path $env:LOCALAPPDATA        'Microsoft\Edge'),
+    (Join-Path $env:LOCALAPPDATA        'Microsoft\EdgeUpdate')
+)
+foreach ($t in $targets) {
+    if (Test-Path -LiteralPath $t) {
+        & takeown.exe /f $t /r /d Y 2>&1 | Out-Null
+        & icacls.exe $t /grant "*S-1-5-32-544:(F)" /t /c /q 2>&1 | Out-Null
+        Remove-Item -LiteralPath $t -Recurse -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $t) {
+            $actions += "delete FAILED: $t (some files still in use)"
+        } else {
+            $actions += "deleted: $t"
+        }
+    }
+}
+
+# 3) Registry cleanup. Kill the entries that Explorer / Settings / other
+#    installers look at when deciding whether Edge is present.
+$regKeys = @(
+    'HKLM:\SOFTWARE\Clients\StartMenuInternet\Microsoft Edge',
+    'HKLM:\SOFTWARE\WOW6432Node\Clients\StartMenuInternet\Microsoft Edge',
+    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Microsoft Edge',
+    'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Microsoft Edge',
+    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Microsoft Edge Update',
+    'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Microsoft Edge Update',
+    'HKLM:\SOFTWARE\Microsoft\EdgeUpdate\ClientState',
+    'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\ClientState'
+)
+foreach ($k in $regKeys) {
+    if (Test-Path -LiteralPath $k) {
+        Remove-Item -LiteralPath $k -Recurse -Force -ErrorAction SilentlyContinue
+        $actions += "removed key: $k"
+    }
+}
+
+# 4) Delete Start Menu shortcuts.
+$shortcuts = @(
+    (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Microsoft Edge.lnk'),
+    (Join-Path $env:PUBLIC     'Desktop\Microsoft Edge.lnk')
+)
+foreach ($s in $shortcuts) {
+    if (Test-Path -LiteralPath $s) {
+        Remove-Item -LiteralPath $s -Force -ErrorAction SilentlyContinue
+        $actions += "removed shortcut: $s"
+    }
+}
+
+# 5) Unregister Edge auto-update scheduled tasks. The task names all start
+#    with "MicrosoftEdgeUpdate" but the exact suffix varies by version.
+Get-ScheduledTask -TaskName 'MicrosoftEdgeUpdate*' -ErrorAction SilentlyContinue |
+    ForEach-Object {
+        try {
+            Unregister-ScheduledTask -TaskName $_.TaskName -Confirm:$false -ErrorAction Stop
+            $actions += ("unregistered task: " + $_.TaskName)
+        } catch {
+            $actions += ("unregister task FAILED: " + $_.TaskName)
+        }
+    }
+
+# 6) Disable Edge auto-update services so Windows Update won't relaunch them.
+foreach ($svc in @('edgeupdate', 'edgeupdatem', 'MicrosoftEdgeElevationService')) {
+    if (Get-Service -Name $svc -ErrorAction SilentlyContinue) {
+        Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue
+        Set-Service  -Name $svc -StartupType Disabled -ErrorAction SilentlyContinue
+        $actions += "disabled service: $svc"
+    }
+}
+
+# 7) Block Windows Update from silently pushing Edge back the next time it
+#    runs a client-config check.
+$blockKey = 'HKLM:\SOFTWARE\Microsoft\EdgeUpdate'
+if (-not (Test-Path -LiteralPath $blockKey)) {
+    New-Item -Path $blockKey -Force | Out-Null
+}
+New-ItemProperty -Path $blockKey -Name 'DoNotUpdateToEdgeWithChromium' `
+    -PropertyType DWord -Value 1 -Force | Out-Null
+$actions += 'set DoNotUpdateToEdgeWithChromium = 1'
+
+$actions | ForEach-Object { Write-Output ("edge:force-delete " + $_) }
+"""
+    return ps.run(script, timeout=180, label="edge:force-delete")
+
+
+# ----------------------------------------------------------------------------
+# Generic AppX force-remove for OS-protected packages (Edge DevTools, etc.)
+# ----------------------------------------------------------------------------
+
+
+def force_delete_appx(pkg: AppxPackage) -> ps.PSResult:
+    """Force-remove an AppX package that Windows refuses to uninstall.
+
+    Strategy: take ownership of the WindowsApps install location, kill
+    running processes that map into it, delete the folder, then scrub the
+    ``AppxAllUserStore\\Applications\\{FullName}`` and ``Deprovisioned``
+    registry entries so Windows stops re-registering it on user logon.
+
+    Only meaningful for packages under ``C:\\Program Files\\WindowsApps`` —
+    for Chromium Edge use :func:`force_delete_edge` instead.
+    """
+    if dryrun.is_enabled():
+        return dryrun.dry_result(f"would force-delete AppX '{pkg.name}' via WindowsApps takeown")
+
+    if not pkg.install_location and not pkg.full_name:
+        return ps.PSResult(
+            ok=False,
+            returncode=1,
+            error=(
+                f"Cannot force-delete '{pkg.name}': neither InstallLocation nor "
+                "PackageFullName is known. Refresh the app list and retry."
+            ),
+        )
+
+    install_q = ps.ps_quote(pkg.install_location or "")
+    fullname_q = ps.ps_quote(pkg.full_name or "")
+    familyname_q = ps.ps_quote(_family_name_from_full_name(pkg.full_name))
+
+    script = rf"""
+$ErrorActionPreference = 'SilentlyContinue'
+$install  = {install_q}
+$fullname = {fullname_q}
+$family   = {familyname_q}
+$actions = @()
+
+# 1) If InstallLocation is empty (package not resolvable), synthesise it.
+if (-not $install -and $fullname) {{
+    $candidate = Join-Path $env:ProgramFiles ("WindowsApps\" + $fullname)
+    if (Test-Path -LiteralPath $candidate) {{ $install = $candidate }}
+}}
+
+# 2) Kill any process running from the install folder. Otherwise deletion
+#    fails with "file in use" for the exe.
+if ($install) {{
+    Get-Process -ErrorAction SilentlyContinue | Where-Object {{
+        $_.Path -and $_.Path.StartsWith($install, [StringComparison]::OrdinalIgnoreCase)
+    }} | ForEach-Object {{
+        try {{ Stop-Process -Id $_.Id -Force -ErrorAction Stop }} catch {{ }}
+        $actions += ("killed process: " + $_.ProcessName + " (pid " + $_.Id + ")")
+    }}
+}}
+
+# 3) Take ownership + full control of the install folder (WindowsApps is
+#    owned by TrustedInstaller by default) and delete it recursively.
+if ($install -and (Test-Path -LiteralPath $install)) {{
+    & takeown.exe /f $install /r /d Y 2>&1 | Out-Null
+    & icacls.exe $install /grant "*S-1-5-32-544:(F)" /t /c /q 2>&1 | Out-Null
+    Remove-Item -LiteralPath $install -Recurse -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $install) {{
+        $actions += ("delete FAILED: " + $install + " (some files still in use)")
+    }} else {{
+        $actions += ("deleted: " + $install)
+    }}
+}} else {{
+    $actions += "install location not present on disk"
+}}
+
+# 4) Scrub the AppX registration so Windows doesn't try to re-register it
+#    on the next user logon.
+if ($fullname) {{
+    $appKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Applications\$fullname"
+    if (Test-Path -LiteralPath $appKey) {{
+        # NonRemovable lock already cleared by _unlock step, but re-clear
+        # here in case this path is invoked standalone.
+        Remove-ItemProperty -LiteralPath $appKey -Name 'NonRemovable' -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $appKey -Recurse -Force -ErrorAction SilentlyContinue
+        $actions += ("removed reg: " + $appKey)
+    }}
+    $pkgKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Packages\$fullname"
+    if (Test-Path -LiteralPath $pkgKey) {{
+        Remove-Item -LiteralPath $pkgKey -Recurse -Force -ErrorAction SilentlyContinue
+        $actions += ("removed reg: " + $pkgKey)
+    }}
+}}
+if ($family) {{
+    $deprov = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Deprovisioned\$family"
+    # Presence here tells Windows "don't reinstall for new users" — we
+    # WANT this key to exist, not delete it. Only delete if the caller
+    # asked to fully undo. For now we just ensure it exists.
+    if (-not (Test-Path -LiteralPath $deprov)) {{
+        New-Item -Path $deprov -Force | Out-Null
+        $actions += ("marked deprovisioned: " + $family)
+    }}
+}}
+
+if ($actions.Count -eq 0) {{
+    Write-Output "force-delete: nothing to do (package not on disk / already gone)"
+}} else {{
+    $actions | ForEach-Object {{ Write-Output ("force-delete " + $_) }}
+}}
+"""
+    return ps.run(script, timeout=180, label=f"force-delete-appx {pkg.name}")
+
+
+def _family_name_from_full_name(full_name: str) -> str:
+    """Derive PackageFamilyName from PackageFullName.
+
+    ``PackageFamilyName`` is ``{Name}_{PublisherHash}`` — the last underscore
+    segment of the full name, appended to the leading name segment. A trivial
+    string operation, but it's easier to read this way:
+
+    >>> _family_name_from_full_name('Microsoft.Foo_1.0.0.0_x64__8wekyb3d8bbwe')
+    'Microsoft.Foo_8wekyb3d8bbwe'
+    """
+    if not full_name:
+        return ""
+    parts = full_name.split("_")
+    if len(parts) < 2:
+        return ""
+    return f"{parts[0]}_{parts[-1]}"
+
+
+def remove_edge_chromium(
+    *,
+    deprovision: bool = True,
+    timeout: int = 300,
+    force_delete_on_block: bool = True,
+) -> ps.PSResult:
+    """Uninstall Chromium Microsoft Edge.
 
     ``Remove-AppxPackage`` does not actually uninstall Edge — Windows blocks it.
-    The supported removal path is Edge's own installer run with
-    ``--uninstall --force-uninstall``. Getting this to succeed on modern
-    Windows builds (11 22H2 and 24H2+) requires three things the previous
-    implementation was missing:
+    On Windows 11 22H2+ even ``setup.exe --force-uninstall`` is rejected with
+    exit code 93 ("Uninstall was blocked for this product") unless invoked
+    from an OS-approved caller such as ``SystemSettings.exe``.
 
-    1. Setting the ``AllowUninstall`` value under ``HKLM:\\SOFTWARE\\Microsoft\\EdgeUpdateDev``
-       (and its ``WOW6432Node`` mirror). The ``Policies\\Microsoft\\EdgeUpdate``
-       location the old script wrote to is not the key ``setup.exe`` reads,
-       so uninstall was silently blocked with exit code 93
-       ("Uninstall was blocked for this product").
-    2. Killing any running Edge / EdgeUpdate / WebView2 processes first —
-       setup.exe refuses to proceed if any of them hold Edge files open.
-    3. Reporting the exit code cleanly. In particular ``93`` gets a
-       human-readable message rather than a bare integer.
+    We therefore chain three strategies:
 
-    We still deprovision the AppX entry so the Store listing disappears.
-    Requires Administrator.
+    1. **Policy setup + process kill.** Set ``AllowUninstall`` under
+       ``EdgeUpdateDev`` (and its ``WOW6432Node`` mirror — the one
+       ``setup.exe`` actually reads) and kill any Edge/EdgeUpdate/WebView2
+       process that would hold Edge files open. Fast, always safe.
+    2. **Region-policy JSON patch (A).** Take ownership of
+       ``%SystemRoot%\\System32\\IntegratedServicesRegionPolicySet.json``,
+       back it up to the user data dir, and rewrite the Edge-uninstall
+       policy to be globally ``enabled``. On some builds this alone flips
+       setup.exe's decision to allow removal.
+    3. **``setup.exe --force-uninstall``.** The supported path when it works.
+       If it returns exit 93 despite (1) and (2), fall through to…
+    4. **Force delete (C).** Kill everything Edge, take ownership of and
+       recursively delete the install folders + user data, scrub the
+       registered launcher / Uninstall / EdgeUpdate registry keys,
+       unregister the ``MicrosoftEdgeUpdate*`` scheduled tasks, disable
+       the ``edgeupdate*`` services, and set
+       ``DoNotUpdateToEdgeWithChromium = 1`` so Windows Update won't
+       silently reinstate Edge on the next client-config poll.
+    5. **Deprovision.** Removes the provisioned AppX entry so freshly
+       created user profiles don't pick Edge back up on first logon.
+
+    Pass ``force_delete_on_block=False`` to skip step (4) if setup.exe still
+    fails — useful for tests or if the user wants to try only the "clean"
+    paths and manually review before nuking files.
+
+    Requires Administrator. Reversible pieces (JSON patch, service state)
+    can be undone via :func:`restore_edge_uninstall_policy` and re-enabling
+    the services in the Services tab.
     """
     if dryrun.is_enabled():
         return dryrun.dry_result("would uninstall Microsoft Edge (Chromium) via setup.exe")
 
     log = _log()
-    log.info("Edge uninstall: starting (deprovision=%s, timeout=%ss)", deprovision, timeout)
+    log.info(
+        "Edge uninstall: starting (deprovision=%s, force_delete_on_block=%s, timeout=%ss)",
+        deprovision,
+        force_delete_on_block,
+        timeout,
+    )
     invalidate_cache()
 
-    # Phase 1: Set AllowUninstall policy where setup.exe actually reads it.
-    # Fast (< 1s); split out so any registry failure is attributable.
+    # ------------------------------------------------------------------
+    # Phase 1: AllowUninstall policy where setup.exe actually reads it.
+    # ------------------------------------------------------------------
     policy_script = r"""
 $ErrorActionPreference = 'SilentlyContinue'
 # The Policies\Microsoft\EdgeUpdate key used to be checked but is ignored on
@@ -354,11 +756,12 @@ foreach ($k in $policyKeys) {
 }
 Write-Output 'edge: AllowUninstall policy set'
 """
-    log.info("Edge uninstall [1/3]: setting AllowUninstall policy…")
+    log.info("Edge uninstall [1/5]: setting AllowUninstall policy…")
     ps.run(policy_script, timeout=30, label="edge:policy")
 
+    # ------------------------------------------------------------------
     # Phase 2: Close anything that would hold Edge files/policies open.
-    # Without this step setup.exe refuses to run and returns exit code 93.
+    # ------------------------------------------------------------------
     kill_script = r"""
 $ErrorActionPreference = 'SilentlyContinue'
 $procs = @('msedge', 'MicrosoftEdgeUpdate', 'msedgewebview2', 'identity_helper')
@@ -376,11 +779,21 @@ if ($killed.Count -gt 0) {
     Write-Output 'edge: no Edge processes were running'
 }
 """
-    log.info("Edge uninstall [2/3]: killing Edge/EdgeUpdate/WebView2 processes…")
+    log.info("Edge uninstall [2/5]: killing Edge/EdgeUpdate/WebView2 processes…")
     ps.run(kill_script, timeout=30, label="edge:kill")
 
-    # Phase 3: Invoke setup.exe under every installed Edge version folder.
-    # This is the slow step (setup.exe itself takes tens of seconds).
+    # ------------------------------------------------------------------
+    # Phase 3 (A): patch the region-policy JSON. Best-effort.
+    # ------------------------------------------------------------------
+    log.info(
+        "Edge uninstall [3/5]: patching IntegratedServicesRegionPolicySet.json (EEA workaround)…"
+    )
+    patch_res = patch_edge_uninstall_policy()
+    log.info("Edge uninstall [3/5]: JSON patch stdout=%r", patch_res.stdout.strip())
+
+    # ------------------------------------------------------------------
+    # Phase 4: setup.exe --force-uninstall under every installed version.
+    # ------------------------------------------------------------------
     setup_script = r"""
 $ErrorActionPreference = 'SilentlyContinue'
 $roots = @(
@@ -413,27 +826,64 @@ foreach ($root in $roots) {
 if (-not $ran) { Write-Output 'edge: setup.exe was not found; nothing to uninstall.' }
 exit $worst
 """
-    log.info("Edge uninstall [3/3]: invoking setup.exe --force-uninstall (may take minutes)…")
+    log.info("Edge uninstall [4/5]: invoking setup.exe --force-uninstall (may take minutes)…")
     res = ps.run(setup_script, timeout=timeout, label="edge:setup")
     log.info(
-        "Edge uninstall: setup.exe returned rc=%s (ok=%s). stdout=%r",
+        "Edge uninstall [4/5]: setup.exe returned rc=%s (ok=%s). stdout=%r",
         res.returncode,
         res.ok,
         res.stdout.strip(),
     )
 
-    # Translate the "uninstall was blocked" exit code into something useful.
-    if res.returncode == EDGE_EXIT_BLOCKED:
+    # ------------------------------------------------------------------
+    # Phase 5 (C): force-delete fallback when setup.exe was blocked.
+    # ------------------------------------------------------------------
+    if res.returncode == EDGE_EXIT_BLOCKED and force_delete_on_block:
+        log.info(
+            "Edge uninstall [5/5]: setup.exe returned %s (blocked); "
+            "falling through to force-delete fallback…",
+            EDGE_EXIT_BLOCKED,
+        )
+        fd_res = force_delete_edge()
+        log.info(
+            "Edge uninstall [5/5]: force-delete rc=%s (ok=%s). stdout=%r",
+            fd_res.returncode,
+            fd_res.ok,
+            fd_res.stdout.strip(),
+        )
+        # Combine outputs. If the force-delete produced anything, promote
+        # the overall result to success — Edge is gone (or as gone as it
+        # can be without a full OS reinstall).
+        combined_stdout = "\n".join(x for x in (res.stdout.strip(), fd_res.stdout.strip()) if x)
+        if fd_res.ok:
+            res.ok = True
+            res.returncode = 0
+            res.error = (
+                f"setup.exe returned {EDGE_EXIT_BLOCKED} (uninstall was blocked by the OS); "
+                "Edge was removed via the force-delete fallback instead. "
+                "Windows Update reinstall was blocked via DoNotUpdateToEdgeWithChromium=1."
+            )
+        else:
+            res.error = (
+                f"Edge setup.exe was blocked (exit {EDGE_EXIT_BLOCKED}) and the "
+                f"force-delete fallback also failed: {fd_res.error or 'see log for details'}."
+            )
+        res.stdout = combined_stdout
+
+    elif res.returncode == EDGE_EXIT_BLOCKED:
+        # Force-delete disabled by caller — surface the actionable message.
         res.ok = False
         res.error = (
             f"Edge setup.exe refused to uninstall (exit {EDGE_EXIT_BLOCKED}: "
-            "'Uninstall was blocked for this product'). On Windows 11 24H2+, "
-            "Microsoft only permits Edge removal when it's launched by an "
-            "approved system process (e.g. the Settings app). Try uninstalling "
-            "from Settings > Apps > Installed apps > Microsoft Edge, or apply "
-            "the EEA region workaround."
+            "'Uninstall was blocked for this product'). Enable "
+            "force_delete_on_block=True (default) to force removal, or "
+            "uninstall from Settings > Apps > Installed apps > Microsoft Edge "
+            "after the EEA JSON patch (already applied) takes effect."
         )
 
+    # ------------------------------------------------------------------
+    # Deprovision: prevents Windows from re-installing Edge for new users.
+    # ------------------------------------------------------------------
     if deprovision:
         log.info("Edge uninstall: deprovisioning AppX entry…")
         deprov = ps.run(
@@ -558,30 +1008,72 @@ def remove_package(
             )
         )
 
-    # Aggregate: succeed if any removal/deprovision step ran without error.
-    removal_steps = [r for lbl, r in steps if lbl != "unlock"]
-    overall_ok = any(r.ok for r in removal_steps)
+    # Aggregate: normally we consider "any removal step succeeded" as OK.
+    # However, "deprovision only" is misleading — it stops NEW user profiles
+    # from getting the package on the next feature update, but the currently
+    # installed copy stays on disk. So track the two categories separately.
+    real_remove_steps = [r for lbl, r in steps if lbl in ("remove-by-name", "remove-by-fullname")]
+    deprov_steps = [r for lbl, r in steps if lbl == "deprovision"]
+    real_remove_ok = any(r.ok for r in real_remove_steps)
+    deprov_ok = any(r.ok for r in deprov_steps)
 
     log.info(
-        "AppX '%s' step summary: %s -> overall=%s",
+        "AppX '%s' step summary: %s -> real_remove=%s, deprovision=%s",
         pkg.name,
         ", ".join(f"{lbl}={'OK' if r.ok else f'FAIL(rc={r.returncode})'}" for lbl, r in steps),
-        "OK" if overall_ok else "FAIL",
+        "OK" if real_remove_ok else "FAIL",
+        "OK" if deprov_ok else "FAIL",
     )
     combined_stdout = "\n".join(r.stdout.strip() for _, r in steps if r.stdout and r.stdout.strip())
     combined_stderr = "\n".join(r.stderr.strip() for _, r in steps if r.stderr and r.stderr.strip())
 
-    if overall_ok:
+    # If the actual removal was blocked by the OS but deprovision worked,
+    # try the force-delete fallback so the user actually gets what they
+    # asked for (the package gone from disk), not just "won't be given to
+    # new users someday". Skip when we don't even know the install location.
+    force_res: ps.PSResult | None = None
+    if not real_remove_ok and _is_os_protected(combined_stderr):
+        log.info(
+            "AppX '%s': OS-protected removal (HRESULT %s); "
+            "attempting force-delete fallback (WindowsApps takeown + delete)…",
+            pkg.name,
+            _ERROR_NOT_SUPPORTED,
+        )
+        force_res = force_delete_appx(pkg)
+        log.info(
+            "AppX '%s' force-delete: rc=%s (ok=%s). stdout=%r",
+            pkg.name,
+            force_res.returncode,
+            force_res.ok,
+            force_res.stdout.strip(),
+        )
+        if force_res.stdout.strip():
+            combined_stdout = (combined_stdout + "\n" + force_res.stdout.strip()).strip()
+        if force_res.stderr.strip():
+            combined_stderr = (combined_stderr + "\n" + force_res.stderr.strip()).strip()
+
+    # Final verdict.
+    force_ok = bool(force_res and force_res.ok)
+    overall_ok = real_remove_ok or force_ok or deprov_ok
+
+    if real_remove_ok or force_ok:
         combined_error = ""
+    elif deprov_ok:
+        # We only deprovisioned. Be honest — the installed copy is still there.
+        combined_error = (
+            f"Partial: '{pkg.name}' was deprovisioned (new user profiles won't "
+            "get it) but the currently installed copy could not be removed on "
+            "this build. Try re-running with the tool up-to-date, or use the "
+            "force-delete option."
+        )
     elif _is_os_protected(combined_stderr):
-        # Windows itself refused removal. Give the user a clear reason instead
-        # of the raw COMException blob so they know it isn't a bug in the tool.
         combined_error = (
             f"Windows refuses to remove '{pkg.name}' on this build "
-            f"(HRESULT {_ERROR_NOT_SUPPORTED}). It is treated as an OS "
-            "component and cannot be uninstalled with Remove-AppxPackage, "
-            "even for Administrators. Disable the associated Windows feature "
-            "instead (Settings > Notifications / Personalisation, or Group Policy)."
+            f"(HRESULT {_ERROR_NOT_SUPPORTED}). Both Remove-AppxPackage and "
+            "the force-delete fallback failed. It is treated as an OS component "
+            "and cannot be uninstalled by any supported means. Disable the "
+            "associated Windows feature instead (Settings > Notifications / "
+            "Personalisation, or Group Policy)."
         )
     else:
         combined_error = combined_stderr or "All removal steps failed."

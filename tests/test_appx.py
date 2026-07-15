@@ -235,65 +235,362 @@ def test_remove_edge_chromium_runs_setup_and_deprovisions(monkeypatch):
     assert "Remove-AppxProvisionedPackage" in joined
 
 
-def test_remove_edge_chromium_writes_correct_policy_and_kills_processes(monkeypatch):
+def test_remove_edge_chromium_runs_all_phases_in_order(monkeypatch):
     """Regression: the old script wrote AllowUninstall to Policies\\EdgeUpdate,
     which Edge's setup.exe ignores on Windows 11 22H2+ (causing exit 93).
-    The fixed script must target EdgeUpdateDev (both native + WOW6432Node)
-    and kill Edge/EdgeUpdate/WebView2 processes before invoking setup.exe.
+    The fixed sequence must be: policy -> kill -> JSON patch (A) -> setup.exe
+    -> deprovision, with policy/kill/setup targeting the correct locations.
     """
     from app.core import powershell as ps
 
-    scripts: list[str] = []
+    scripts: list[tuple[str, str]] = []
 
-    def fake_run(script, *, timeout=120, **_kwargs):
-        scripts.append(script)
+    def fake_run(script, *, timeout=120, label=None, **_kwargs):
+        scripts.append((label or "", script))
         return ps.PSResult(ok=True, returncode=0, stdout="setup.exe (149) exit=0")
 
     monkeypatch.setattr(ps, "run", fake_run)
     appx.remove_edge_chromium(deprovision=False)
 
-    # Phase 1 script must set AllowUninstall under the real key + WOW6432Node.
-    policy_script = scripts[0]
+    # Assert on the labels because they're stable across script text changes.
+    labels = [lbl for lbl, _ in scripts]
+    assert labels[0] == "edge:policy"
+    assert labels[1] == "edge:kill"
+    assert labels[2] == "edge:policy-json-patch"
+    assert labels[3] == "edge:setup"
+    # deprovision=False, so no edge:deprovision. setup.exe returned 0, so no
+    # force-delete fallback either.
+    assert "edge:deprovision" not in labels
+    assert "edge:force-delete" not in labels
+
+    # Phase 1 (policy): AllowUninstall in the correct keys.
+    policy_script = scripts[0][1]
     assert "SOFTWARE\\Microsoft\\EdgeUpdateDev" in policy_script
     assert "WOW6432Node\\Microsoft\\EdgeUpdateDev" in policy_script
     assert "AllowUninstall" in policy_script
 
-    # Phase 2 script must kill the processes that would otherwise hold
-    # Edge files open.
-    kill_script = scripts[1]
+    # Phase 2 (kill): kills the four blocking process names.
+    kill_script = scripts[1][1]
     assert "Stop-Process" in kill_script
     for proc in ("msedge", "MicrosoftEdgeUpdate", "msedgewebview2"):
         assert proc in kill_script
 
-    # Phase 3 script must actually invoke setup.exe.
-    setup_script = scripts[2]
+    # Phase 3 (JSON patch): targets IntegratedServicesRegionPolicySet.json.
+    patch_script = scripts[2][1]
+    assert "IntegratedServicesRegionPolicySet.json" in patch_script
+    assert "takeown" in patch_script
+    assert "defaultState" in patch_script
+
+    # Phase 4 (setup.exe): actual force-uninstall invocation.
+    setup_script = scripts[3][1]
     assert "Start-Process" in setup_script
     assert "--force-uninstall" in setup_script
 
 
-def test_remove_edge_chromium_reports_exit_93_clearly(monkeypatch):
-    """Exit code 93 ('Uninstall was blocked') must be translated into a
-    human-readable error rather than surfaced as a bare integer.
+def test_remove_edge_chromium_falls_through_to_force_delete_on_93(monkeypatch):
+    """When setup.exe returns 93, we chain the force-delete fallback and
+    report overall success (the browser IS gone from disk) with an error
+    string that says explicitly what happened.
     """
     from app.core import powershell as ps
 
-    def fake_run(script, *, timeout=120, **_kwargs):
-        # The setup.exe phase returns 93; policy/kill/deprovision succeed.
-        if "Start-Process" in script and "setup.exe" in script.lower():
+    seen_labels: list[str] = []
+
+    def fake_run(script, *, timeout=120, label=None, **_kwargs):
+        seen_labels.append(label or "")
+        if label == "edge:setup":
             return ps.PSResult(
                 ok=False,
                 returncode=appx.EDGE_EXIT_BLOCKED,
                 stdout="setup.exe (149) exit=93",
             )
+        if label == "edge:force-delete":
+            return ps.PSResult(ok=True, returncode=0, stdout="edge:force-delete deleted stuff")
         return ps.PSResult(ok=True, returncode=0)
 
     monkeypatch.setattr(ps, "run", fake_run)
     res = appx.remove_edge_chromium(deprovision=True)
+
+    # We should have hit both setup.exe AND the force-delete fallback.
+    assert "edge:setup" in seen_labels
+    assert "edge:force-delete" in seen_labels
+    # Overall result is now success because the fallback removed Edge.
+    assert res.ok is True
+    # But we still explain what happened in the error/status message so the
+    # user knows setup.exe was refused before the fallback took over.
+    assert "93" in res.error
+    assert "force-delete" in res.error
+    assert "DoNotUpdateToEdgeWithChromium" in res.error
+
+
+def test_remove_edge_chromium_reports_exit_93_when_force_delete_disabled(monkeypatch):
+    """With ``force_delete_on_block=False`` we skip the nuke fallback and
+    surface the actionable exit-93 error (used e.g. from tests or for
+    users who want a chance to review before deletion)."""
+    from app.core import powershell as ps
+
+    def fake_run(script, *, timeout=120, label=None, **_kwargs):
+        if label == "edge:setup":
+            return ps.PSResult(
+                ok=False,
+                returncode=appx.EDGE_EXIT_BLOCKED,
+                stdout="setup.exe (149) exit=93",
+            )
+        # Fail loudly if the force-delete path is hit despite being disabled.
+        assert label != "edge:force-delete", "force-delete must not run when disabled"
+        return ps.PSResult(ok=True, returncode=0)
+
+    monkeypatch.setattr(ps, "run", fake_run)
+    res = appx.remove_edge_chromium(deprovision=True, force_delete_on_block=False)
     assert res.ok is False
-    assert "exit 93" in res.error
+    assert "93" in res.error
     assert "blocked" in res.error.lower()
-    # Users need actionable guidance, not just "it failed".
     assert "Settings" in res.error or "EEA" in res.error
+
+
+# ---------------------------------------------------------------------------
+# Phase A: IntegratedServicesRegionPolicySet.json patcher
+# ---------------------------------------------------------------------------
+
+
+def test_patch_edge_uninstall_policy_uses_takeown_and_targets_json(monkeypatch):
+    from app.core import powershell as ps
+
+    captured: list[tuple[str, str]] = []
+
+    def fake_run(script, *, timeout=60, label=None, **_kwargs):
+        captured.append((label or "", script))
+        return ps.PSResult(ok=True, returncode=0, stdout="policy-json: patched 1 policy/policies")
+
+    monkeypatch.setattr(ps, "run", fake_run)
+    res = appx.patch_edge_uninstall_policy()
+    assert res.ok
+
+    label, script = captured[0]
+    assert label == "edge:policy-json-patch"
+    assert "IntegratedServicesRegionPolicySet.json" in script
+    assert "takeown.exe" in script
+    assert "icacls.exe" in script
+    assert "ConvertFrom-Json" in script
+    assert "defaultState" in script
+    # Backup path lives in the user data dir (isolated by conftest).
+    assert "IntegratedServicesRegionPolicySet.backup.json" in script
+
+
+def test_patch_edge_uninstall_policy_dry_run(monkeypatch):
+    from app.core import dryrun
+
+    dryrun.set_enabled(True)
+    try:
+        res = appx.patch_edge_uninstall_policy()
+        assert res.ok
+        assert dryrun.DRY_RUN_MARKER in res.stdout
+    finally:
+        dryrun.set_enabled(False)
+
+
+def test_restore_edge_uninstall_policy_copies_backup(monkeypatch):
+    from app.core import powershell as ps
+
+    captured: list[tuple[str, str]] = []
+
+    def fake_run(script, *, timeout=60, label=None, **_kwargs):
+        captured.append((label or "", script))
+        return ps.PSResult(ok=True, returncode=0)
+
+    monkeypatch.setattr(ps, "run", fake_run)
+    appx.restore_edge_uninstall_policy()
+    assert captured[0][0] == "edge:policy-json-restore"
+    assert "Copy-Item" in captured[0][1]
+
+
+# ---------------------------------------------------------------------------
+# Phase C: force_delete_edge
+# ---------------------------------------------------------------------------
+
+
+def test_force_delete_edge_covers_all_categories(monkeypatch):
+    """force_delete_edge must touch files, registry, shortcuts, tasks,
+    services, and set the DoNotUpdateToEdgeWithChromium block."""
+    from app.core import powershell as ps
+
+    captured: list[tuple[str, str]] = []
+
+    def fake_run(script, *, timeout=60, label=None, **_kwargs):
+        captured.append((label or "", script))
+        return ps.PSResult(ok=True, returncode=0, stdout="edge:force-delete done")
+
+    monkeypatch.setattr(ps, "run", fake_run)
+    res = appx.force_delete_edge()
+    assert res.ok
+    assert captured[0][0] == "edge:force-delete"
+    body = captured[0][1]
+    # Files.
+    assert "Microsoft\\Edge" in body
+    assert "takeown.exe" in body
+    assert "Remove-Item" in body
+    # Registry.
+    assert "SOFTWARE\\Clients\\StartMenuInternet\\Microsoft Edge" in body
+    assert "Uninstall\\Microsoft Edge" in body
+    # Scheduled tasks.
+    assert "MicrosoftEdgeUpdate*" in body
+    assert "Unregister-ScheduledTask" in body
+    # Services.
+    assert "edgeupdate" in body
+    assert "Set-Service" in body
+    # Prevent-reinstall block.
+    assert "DoNotUpdateToEdgeWithChromium" in body
+
+
+def test_force_delete_edge_dry_run():
+    from app.core import dryrun
+
+    dryrun.set_enabled(True)
+    try:
+        res = appx.force_delete_edge()
+        assert res.ok
+        assert dryrun.DRY_RUN_MARKER in res.stdout
+    finally:
+        dryrun.set_enabled(False)
+
+
+# ---------------------------------------------------------------------------
+# Generic force_delete_appx (for OS-protected AppX like Edge DevTools)
+# ---------------------------------------------------------------------------
+
+
+def test_family_name_from_full_name_extracts_publisher_hash():
+    assert (
+        appx._family_name_from_full_name("Microsoft.Foo_1.0.0.0_x64__8wekyb3d8bbwe")
+        == "Microsoft.Foo_8wekyb3d8bbwe"
+    )
+    assert appx._family_name_from_full_name("") == ""
+    assert appx._family_name_from_full_name("NoUnderscore") == ""
+
+
+def test_force_delete_appx_takes_ownership_and_deletes(monkeypatch):
+    from app.core import powershell as ps
+
+    captured: list[tuple[str, str]] = []
+
+    def fake_run(script, *, timeout=60, label=None, **_kwargs):
+        captured.append((label or "", script))
+        return ps.PSResult(ok=True, returncode=0, stdout="force-delete done")
+
+    monkeypatch.setattr(ps, "run", fake_run)
+
+    pkg = appx.AppxPackage(
+        name="Microsoft.MicrosoftEdgeDevToolsClient",
+        full_name="Microsoft.MicrosoftEdgeDevToolsClient_1000.25128.1000.0_neutral_neutral_8wekyb3d8bbwe",
+        install_location=r"C:\Program Files\WindowsApps\Microsoft.MicrosoftEdgeDevToolsClient_1000.25128.1000.0_neutral_neutral_8wekyb3d8bbwe",
+    )
+    res = appx.force_delete_appx(pkg)
+    assert res.ok
+
+    body = captured[0][1]
+    label = captured[0][0]
+    assert label.startswith("force-delete-appx")
+    assert "takeown.exe" in body
+    assert "Remove-Item" in body
+    # Both the versioned key and the deprovisioned marker are targeted.
+    assert "AppxAllUserStore\\Applications\\" in body
+    assert "AppxAllUserStore\\Deprovisioned\\" in body
+    # Package identifiers are quoted and interpolated into the script.
+    assert "Microsoft.MicrosoftEdgeDevToolsClient" in body
+
+
+def test_force_delete_appx_refuses_when_no_location():
+    """We refuse to run if we have nothing to point takeown/Remove-Item at,
+    to avoid nuking the wrong folder."""
+    pkg = appx.AppxPackage(name="Unknown.Pkg", full_name="", install_location="")
+    res = appx.force_delete_appx(pkg)
+    assert res.ok is False
+    assert "InstallLocation" in res.error or "PackageFullName" in res.error
+
+
+def test_force_delete_appx_dry_run():
+    from app.core import dryrun
+
+    dryrun.set_enabled(True)
+    try:
+        pkg = appx.AppxPackage(
+            name="Foo.App", full_name="Foo.App_1_x64__h", install_location="C:/x"
+        )
+        res = appx.force_delete_appx(pkg)
+        assert res.ok
+        assert dryrun.DRY_RUN_MARKER in res.stdout
+    finally:
+        dryrun.set_enabled(False)
+
+
+# ---------------------------------------------------------------------------
+# remove_package fallback into force_delete_appx on OS-protected failure
+# ---------------------------------------------------------------------------
+
+
+def test_remove_package_falls_through_to_force_delete_on_0x80070032(monkeypatch):
+    """When Remove-AppxPackage fails with the OS-protected HRESULT we now
+    attempt force_delete_appx before giving up, and the overall result
+    reflects the fallback outcome."""
+    from app.core import powershell as ps
+
+    labels: list[str] = []
+
+    def fake_run(script, *, timeout=60, label=None, **_kwargs):
+        labels.append(label or "")
+        # unlock succeeds; both real removals fail with the OS-protected
+        # HRESULT; deprovision succeeds; force-delete succeeds.
+        if label and label.startswith("unlock"):
+            return ps.PSResult(ok=True, returncode=0)
+        if label and label.startswith("remove-by-"):
+            return ps.PSResult(
+                ok=False,
+                returncode=1,
+                stderr="Deployment Remove operation failed with error 0x80070032.",
+            )
+        if label and label.startswith("deprovision"):
+            return ps.PSResult(ok=True, returncode=0)
+        if label and label.startswith("force-delete-appx"):
+            return ps.PSResult(ok=True, returncode=0, stdout="force-delete deleted: C:\\...\\Foo")
+        return ps.PSResult(ok=True, returncode=0)
+
+    monkeypatch.setattr(ps, "run", fake_run)
+
+    pkg = appx.AppxPackage(
+        name="Microsoft.MicrosoftEdgeDevToolsClient",
+        full_name="Microsoft.MicrosoftEdgeDevToolsClient_1_neutral__abc",
+        install_location=r"C:\Program Files\WindowsApps\Microsoft.MicrosoftEdgeDevToolsClient_1_neutral__abc",
+        is_non_removable=True,
+    )
+    res = appx.remove_package(pkg)
+
+    # force-delete was invoked as the fallback.
+    assert any(lbl.startswith("force-delete-appx") for lbl in labels), labels
+    # Overall reported as success because the fallback succeeded.
+    assert res.ok is True
+    assert "force-delete" in res.stdout
+
+
+def test_remove_package_reports_partial_when_only_deprovision_succeeds(monkeypatch):
+    """If Remove-AppxPackage fails with a NON-OS-protected error and only
+    deprovision succeeds, we report PARTIAL rather than a misleading OK.
+    (OS-protected errors instead trigger the force-delete fallback.)"""
+    from app.core import powershell as ps
+
+    def fake_run(script, *, timeout=60, label=None, **_kwargs):
+        if label and label.startswith("remove-by-"):
+            # Some generic non-OS-protected transient error.
+            return ps.PSResult(ok=False, returncode=1, stderr="Some transient failure.")
+        return ps.PSResult(ok=True, returncode=0)
+
+    monkeypatch.setattr(ps, "run", fake_run)
+    pkg = appx.AppxPackage(name="Foo.App", full_name="Foo.App_1_x64__h")
+    res = appx.remove_package(pkg)
+    # OK overall because deprovision succeeded, but the error message must
+    # tell the user honestly that the installed copy is still there.
+    assert res.ok is True
+    assert "Partial" in res.error
+    assert "deprovisioned" in res.error
 
 
 # ---------------------------------------------------------------------------
