@@ -32,3 +32,9 @@ $ErrorActionPreference = 'SilentlyContinue'
 $pol = 'HKLM:\SOFTWARE\Policies\Microsoft\EdgeUpdate'
 if (-not (Test-Path $pol)) { New-Item -Path $pol -Force | Out-Null }
 New-Item…
+
+
+
+
+
+114409 WARNING: Execution of 'set_exe_build_timestamp' failed on attempt #1 / 20: PermissionError(13, 'Permission denied'). Retrying in 0.05 second(s)...
