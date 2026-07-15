@@ -1,0 +1,34 @@
+2026-07-15 14:54:09 WARNING win-debloater: PS rc=1 in 1512ms: Get-AppxPackage -AllUsers -Name 'Microsoft.Windows.ContentDeliveryManager' | Remove-AppxPackage -ErrorAction SilentlyContinue
+2026-07-15 14:54:10 WARNING win-debloater: PS rc=1 in 1184ms: Remove-AppxPackage -AllUsers -Package 'Microsoft.Windows.ContentDeliveryManager_10.0.26100.1_neutral_neutral_cw5n1h2txyewy' -ErrorAction SilentlyContinue  ERR: Remove-AppxPackage : Removal failed. Please contact your software vendor.
+Deployment Remove operation with target volume C: on Package
+Microsoft.Windows.ContentDeliveryManager_10.0.26100.1_neutral_neutral_cw5n1h2txyewy from:   failed with error
+0x80070032. See http://go.microsoft.com/fwlink/?LinkId=235160 for help diagnosing app deployment issues.
+At line:1 char:49
++ ... ding]::UTF8;Remove-AppxPackage -AllUsers -Package 'Microsoft.Windows. ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:) [Remove-AppxPackage], COMException
+    + FullyQualifiedErrorId : System.Runtime.InteropServices.COMException,Microsoft.Windows.Appx.PackageManager.Comman
+   ds.RemoveAppxPackageCommand
+2026-07-15 14:54:13 WARNING win-debloater: PS rc=1 in 1354ms: Get-AppxPackage -AllUsers -Name 'Microsoft.MicrosoftEdgeDevToolsClient' | Remove-AppxPackage -ErrorAction SilentlyContinue
+2026-07-15 14:54:30 WARNING win-debloater: PS rc=1 in 960ms: Remove-AppxPackage -AllUsers -Package 'Microsoft.MicrosoftEdgeDevToolsClient_1000.25128.1000.0_neutral_neutral_8wekyb3d8bbwe' -ErrorAction SilentlyContinue  ERR: Remove-AppxPackage : Removal failed. Please contact your software vendor.
+Deployment Remove operation with target volume C: on Package
+Microsoft.MicrosoftEdgeDevToolsClient_1000.25128.1000.0_neutral_neutral_8wekyb3d8bbwe from:   failed with error
+0x80070032. See http://go.microsoft.com/fwlink/?LinkId=235160 for help diagnosing app deployment issues.
+At line:1 char:49
++ ... ding]::UTF8;Remove-AppxPackage -AllUsers -Package 'Microsoft.Microsof ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:) [Remove-AppxPackage], COMException
+    + FullyQualifiedErrorId : System.Runtime.InteropServices.COMException,Microsoft.Windows.Appx.PackageManager.Comman
+   ds.RemoveAppxPackageCommand
+2026-07-15 14:54:34 WARNING win-debloater: PS rc=93 in 2939ms:
+$ErrorActionPreference = 'SilentlyContinue'
+# Some builds block Edge removal unless this policy is present.
+$pol = 'HKLM:\SOFTWARE\Policies\Microsoft\EdgeUpdate'
+if (-not (Test-Path $pol)) { New-Item -Path $pol -Force | Out-Null }
+New-Item…
+2026-07-15 14:54:56 WARNING win-debloater: PS rc=93 in 2863ms:
+$ErrorActionPreference = 'SilentlyContinue'
+# Some builds block Edge removal unless this policy is present.
+$pol = 'HKLM:\SOFTWARE\Policies\Microsoft\EdgeUpdate'
+if (-not (Test-Path $pol)) { New-Item -Path $pol -Force | Out-Null }
+New-Item…
