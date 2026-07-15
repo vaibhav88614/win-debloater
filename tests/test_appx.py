@@ -229,6 +229,125 @@ def test_remove_edge_chromium_runs_setup_and_deprovisions(monkeypatch):
     assert "Remove-AppxProvisionedPackage" in joined
 
 
+def test_remove_edge_chromium_writes_correct_policy_and_kills_processes(monkeypatch):
+    """Regression: the old script wrote AllowUninstall to Policies\\EdgeUpdate,
+    which Edge's setup.exe ignores on Windows 11 22H2+ (causing exit 93).
+    The fixed script must target EdgeUpdateDev (both native + WOW6432Node)
+    and kill Edge/EdgeUpdate/WebView2 processes before invoking setup.exe.
+    """
+    from app.core import powershell as ps
+
+    scripts: list[str] = []
+
+    def fake_run(script, *, timeout=120):
+        scripts.append(script)
+        return ps.PSResult(ok=True, returncode=0, stdout="setup.exe (149) exit=0")
+
+    monkeypatch.setattr(ps, "run", fake_run)
+    appx.remove_edge_chromium(deprovision=False)
+
+    setup_script = scripts[0]
+    assert "SOFTWARE\\Microsoft\\EdgeUpdateDev" in setup_script
+    assert "WOW6432Node\\Microsoft\\EdgeUpdateDev" in setup_script
+    assert "AllowUninstall" in setup_script
+    # Kill-processes step must appear *before* the setup.exe invocation.
+    assert "Stop-Process" in setup_script
+    for proc in ("msedge", "MicrosoftEdgeUpdate", "msedgewebview2"):
+        assert proc in setup_script
+    # Compare against Start-Process (the real invocation), not the string
+    # "setup.exe" which appears earlier in explanatory comments.
+    assert setup_script.index("Stop-Process") < setup_script.index("Start-Process")
+
+
+def test_remove_edge_chromium_reports_exit_93_clearly(monkeypatch):
+    """Exit code 93 ('Uninstall was blocked') must be translated into a
+    human-readable error rather than surfaced as a bare integer.
+    """
+    from app.core import powershell as ps
+
+    def fake_run(script, *, timeout=120):
+        # First call: setup.exe returns 93. Deprovision call returns success.
+        if "setup.exe" in script:
+            return ps.PSResult(
+                ok=False,
+                returncode=appx.EDGE_EXIT_BLOCKED,
+                stdout="setup.exe (149) exit=93",
+            )
+        return ps.PSResult(ok=True, returncode=0)
+
+    monkeypatch.setattr(ps, "run", fake_run)
+    res = appx.remove_edge_chromium(deprovision=True)
+    assert res.ok is False
+    assert "exit 93" in res.error
+    assert "blocked" in res.error.lower()
+    # Users need actionable guidance, not just "it failed".
+    assert "Settings" in res.error or "EEA" in res.error
+
+
+# ---------------------------------------------------------------------------
+# OS-protected AppX packages (0x80070032 / ERROR_NOT_SUPPORTED)
+# ---------------------------------------------------------------------------
+
+
+def test_is_os_protected_recognises_error_not_supported():
+    assert appx._is_os_protected("Deployment failed with error 0x80070032. See...")
+    assert appx._is_os_protected("HRESULT: 0X80070032")  # case-insensitive
+    assert appx._is_os_protected("failed 0x80073CFA (part of Windows)")
+    assert not appx._is_os_protected("")
+    assert not appx._is_os_protected("Some other error 0x12345678")
+
+
+def test_remove_package_translates_os_protected_failure(monkeypatch):
+    """When Remove-AppxPackage reports 0x80070032 (ERROR_NOT_SUPPORTED) —
+    e.g. for Microsoft.Windows.ContentDeliveryManager on Windows 11 24H2+ —
+    the aggregated error must explain *why* removal is blocked instead of
+    dumping the raw COMException traceback.
+    """
+    from app.core import powershell as ps
+
+    def fake_run(script, *, timeout=60):
+        return ps.PSResult(
+            ok=False,
+            returncode=1,
+            stderr=(
+                "Remove-AppxPackage : Removal failed. Please contact your "
+                "software vendor. Deployment Remove operation ... failed with "
+                "error 0x80070032."
+            ),
+        )
+
+    monkeypatch.setattr(ps, "run", fake_run)
+    pkg = appx.AppxPackage(
+        name="Microsoft.Windows.ContentDeliveryManager",
+        full_name="Microsoft.Windows.ContentDeliveryManager_10.0.26100.1_neutral_neutral_cw5n1h2txyewy",
+        is_non_removable=True,
+    )
+    res = appx.remove_package(pkg)
+    assert res.ok is False
+    assert "0x80070032" in res.error
+    assert "OS component" in res.error
+    assert "Microsoft.Windows.ContentDeliveryManager" in res.error
+
+
+def test_remove_package_generic_failure_keeps_stderr(monkeypatch):
+    """Non-OS-protected failures should still surface the underlying stderr
+    (so we don't lose real error text for unrelated problems)."""
+    from app.core import powershell as ps
+
+    def fake_run(script, *, timeout=60):
+        return ps.PSResult(
+            ok=False,
+            returncode=1,
+            stderr="Some unexpected error: package file is corrupted.",
+        )
+
+    monkeypatch.setattr(ps, "run", fake_run)
+    pkg = appx.AppxPackage(name="Foo.App", full_name="Foo.App_1_x64__h")
+    res = appx.remove_package(pkg)
+    assert res.ok is False
+    assert "corrupted" in res.error
+
+
 # ---------------------------------------------------------------------------
 # Provisioned-package merging (A7)
 # ---------------------------------------------------------------------------

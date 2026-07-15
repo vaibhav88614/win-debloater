@@ -25,6 +25,20 @@ CATALOG_VERSION = 3
 # with its bundled ``setup.exe --uninstall`` installer instead.
 EDGE_STABLE_ID = "Microsoft.MicrosoftEdge.Stable"
 
+# HRESULT strings that indicate Windows itself refuses to remove a package
+# (it is a protected/OS-integrated component). Seen in ``stderr`` from
+# ``Remove-AppxPackage`` on Windows 11 24H2+ for packages such as
+# ``Microsoft.Windows.ContentDeliveryManager`` and
+# ``Microsoft.MicrosoftEdgeDevToolsClient``.
+_ERROR_NOT_SUPPORTED = "0x80070032"  # ERROR_NOT_SUPPORTED
+_ERROR_ACCESS_DENIED = "0x80073cfa"  # ERROR_INSTALL_OPEN_PACKAGE_FAILED ("part of Windows")
+_OS_PROTECTED_MARKERS = (_ERROR_NOT_SUPPORTED, _ERROR_ACCESS_DENIED)
+
+# Edge Chromium ``setup.exe`` exit code emitted when Windows blocks the
+# uninstall (``Uninstall was blocked for this product: 93`` in the Edge
+# installer log). See https://github.com/ChrisTitusTech/winutil/issues/2672.
+EDGE_EXIT_BLOCKED = 93
+
 # Short-lived cache for ``list_installed`` so re-entering the tab is instant.
 # Mutations (remove/restore) call ``invalidate_cache`` to force a refresh.
 _LIST_CACHE_TTL = 10.0
@@ -291,9 +305,22 @@ def remove_edge_chromium(*, deprovision: bool = True, timeout: int = 300) -> ps.
 
     ``Remove-AppxPackage`` does not actually uninstall Edge — Windows blocks it.
     The supported removal path is Edge's own installer run with
-    ``--uninstall --force-uninstall``. We also set the ``AllowUninstall`` policy
-    (some builds refuse to uninstall otherwise) and deprovision the AppX entry so
-    the Store listing disappears. Requires Administrator.
+    ``--uninstall --force-uninstall``. Getting this to succeed on modern
+    Windows builds (11 22H2 and 24H2+) requires three things the previous
+    implementation was missing:
+
+    1. Setting the ``AllowUninstall`` value under ``HKLM:\\SOFTWARE\\Microsoft\\EdgeUpdateDev``
+       (and its ``WOW6432Node`` mirror). The ``Policies\\Microsoft\\EdgeUpdate``
+       location the old script wrote to is not the key ``setup.exe`` reads,
+       so uninstall was silently blocked with exit code 93
+       ("Uninstall was blocked for this product").
+    2. Killing any running Edge / EdgeUpdate / WebView2 processes first —
+       setup.exe refuses to proceed if any of them hold Edge files open.
+    3. Reporting the exit code cleanly. In particular ``93`` gets a
+       human-readable message rather than a bare integer.
+
+    We still deprovision the AppX entry so the Store listing disappears.
+    Requires Administrator.
     """
     if dryrun.is_enabled():
         return dryrun.dry_result("would uninstall Microsoft Edge (Chromium) via setup.exe")
@@ -303,11 +330,30 @@ def remove_edge_chromium(*, deprovision: bool = True, timeout: int = 300) -> ps.
     # Program Files roots. Return the highest (worst) setup exit code seen.
     script = r"""
 $ErrorActionPreference = 'SilentlyContinue'
-# Some builds block Edge removal unless this policy is present.
-$pol = 'HKLM:\SOFTWARE\Policies\Microsoft\EdgeUpdate'
-if (-not (Test-Path $pol)) { New-Item -Path $pol -Force | Out-Null }
-New-ItemProperty -Path $pol -Name 'AllowUninstall' -PropertyType DWord -Value 1 -Force | Out-Null
 
+# 1) Set AllowUninstall in the location Edge's setup.exe actually reads.
+#    (The Policies\Microsoft\EdgeUpdate key used to be checked but is
+#    ignored on Windows 11 22H2+; EdgeUpdateDev is the correct one.)
+$policyKeys = @(
+    'HKLM:\SOFTWARE\Microsoft\EdgeUpdateDev',
+    'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdateDev',
+    'HKLM:\SOFTWARE\Policies\Microsoft\EdgeUpdate'
+)
+foreach ($k in $policyKeys) {
+    if (-not (Test-Path $k)) { New-Item -Path $k -Force | Out-Null }
+    New-ItemProperty -Path $k -Name 'AllowUninstall' -PropertyType DWord `
+        -Value 1 -Force | Out-Null
+}
+
+# 2) Close anything that would hold Edge files/policies open. Without this
+#    step setup.exe refuses to run and returns exit code 93 immediately.
+$procs = @('msedge', 'MicrosoftEdgeUpdate', 'msedgewebview2', 'identity_helper')
+foreach ($name in $procs) {
+    Get-Process -Name $name -ErrorAction SilentlyContinue |
+        Stop-Process -Force -ErrorAction SilentlyContinue
+}
+
+# 3) Invoke setup.exe under every installed Edge version folder.
 $roots = @(
     (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application'),
     (Join-Path $env:ProgramFiles 'Microsoft\Edge\Application')
@@ -322,9 +368,14 @@ foreach ($root in $roots) {
             if (Test-Path $setup) {
                 $ran = $true
                 $p = Start-Process -FilePath $setup -ArgumentList @(
-                    '--uninstall', '--system-level', '--verbose-logging', '--force-uninstall'
+                    '--uninstall',
+                    '--system-level',
+                    '--verbose-logging',
+                    '--force-uninstall'
                 ) -Wait -PassThru -WindowStyle Hidden
-                if ($p.ExitCode -ne 0) { $worst = $p.ExitCode }
+                # Track the highest non-zero exit code so we surface a real
+                # failure even if a later per-version call happened to be 0.
+                if ($p.ExitCode -gt $worst) { $worst = $p.ExitCode }
                 Write-Output ("setup.exe ({0}) exit={1}" -f $_.Name, $p.ExitCode)
             }
         }
@@ -333,6 +384,18 @@ if (-not $ran) { Write-Output 'Edge setup.exe was not found; nothing to uninstal
 exit $worst
 """
     res = ps.run(script, timeout=timeout)
+
+    # Translate the "uninstall was blocked" exit code into something useful.
+    if res.returncode == EDGE_EXIT_BLOCKED:
+        res.ok = False
+        res.error = (
+            f"Edge setup.exe refused to uninstall (exit {EDGE_EXIT_BLOCKED}: "
+            "'Uninstall was blocked for this product'). On Windows 11 24H2+, "
+            "Microsoft only permits Edge removal when it's launched by an "
+            "approved system process (e.g. the Settings app). Try uninstalling "
+            "from Settings > Apps > Installed apps > Microsoft Edge, or apply "
+            "the EEA region workaround."
+        )
 
     if deprovision:
         deprov = ps.run(
@@ -439,7 +502,21 @@ def remove_package(
     overall_ok = any(r.ok for r in removal_steps)
     combined_stdout = "\n".join(r.stdout.strip() for _, r in steps if r.stdout and r.stdout.strip())
     combined_stderr = "\n".join(r.stderr.strip() for _, r in steps if r.stderr and r.stderr.strip())
-    combined_error = "" if overall_ok else (combined_stderr or "All removal steps failed.")
+
+    if overall_ok:
+        combined_error = ""
+    elif _is_os_protected(combined_stderr):
+        # Windows itself refused removal. Give the user a clear reason instead
+        # of the raw COMException blob so they know it isn't a bug in the tool.
+        combined_error = (
+            f"Windows refuses to remove '{pkg.name}' on this build "
+            f"(HRESULT {_ERROR_NOT_SUPPORTED}). It is treated as an OS "
+            "component and cannot be uninstalled with Remove-AppxPackage, "
+            "even for Administrators. Disable the associated Windows feature "
+            "instead (Settings > Notifications / Personalisation, or Group Policy)."
+        )
+    else:
+        combined_error = combined_stderr or "All removal steps failed."
 
     return ps.PSResult(
         ok=overall_ok,
@@ -448,6 +525,16 @@ def remove_package(
         stderr=combined_stderr,
         error=combined_error,
     )
+
+
+def _is_os_protected(text: str) -> bool:
+    """Return True when ``text`` contains an HRESULT that indicates Windows
+    itself refused to remove the package (as opposed to a transient error).
+    """
+    if not text:
+        return False
+    low = text.lower()
+    return any(marker in low for marker in _OS_PROTECTED_MARKERS)
 
 
 def restore_package(pkg: AppxPackage) -> ps.PSResult:
