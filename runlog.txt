@@ -1,56 +1,87 @@
-2026-07-15 16:11:42 INFO    win-debloater: BatchWorker: starting 2 item(s)
-2026-07-15 16:12:03 INFO    win-debloater: BatchWorker: [1/2] starting: Edge DevTools
-2026-07-15 16:12:03 INFO    win-debloater: Removing AppX 'Microsoft.MicrosoftEdgeDevToolsClient' (full_name=Microsoft.MicrosoftEdgeDevToolsClient_1000.25128.1000.0_neutral_neutral_8wekyb3d8bbwe, non_removable=True, all_users=True, deprovision=True)
-2026-07-15 16:12:03 INFO    win-debloater:   Step 1/N: unlock NonRemovable registry for 'Microsoft.MicrosoftEdgeDevToolsClient'
-2026-07-15 16:12:03 INFO    win-debloater: PS starting [unlock Microsoft.MicrosoftEdgeDevToolsClient] (timeout=60s): $_fn = (Get-AppxPackage -Name 'Microsoft.MicrosoftEdgeDevToolsClient' | Select-Object -ExpandProperty PackageFullName -ErrorAction SilentlyContinue);if ($_fn) {  $_key = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore…
-2026-07-15 16:12:04 INFO    win-debloater: PS rc=0 [unlock Microsoft.MicrosoftEdgeDevToolsClient] in 1065ms: $_fn = (Get-AppxPackage -Name 'Microsoft.MicrosoftEdgeDevToolsClient' | Select-Object -ExpandProperty PackageFullName -ErrorAction SilentlyContinue);if ($_fn) {  $_key = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore…
-2026-07-15 16:12:04 INFO    win-debloater:   Step: Remove-AppxPackage -Name 'Microsoft.MicrosoftEdgeDevToolsClient' (scope=-AllUsers, timeout=180s)
-2026-07-15 16:12:04 INFO    win-debloater: PS starting [remove-by-name Microsoft.MicrosoftEdgeDevToolsClient] (timeout=180s): Get-AppxPackage -AllUsers -Name 'Microsoft.MicrosoftEdgeDevToolsClient' | Remove-AppxPackage -ErrorAction SilentlyContinue
-2026-07-15 16:12:24 INFO    win-debloater: PS still running [remove-by-name Microsoft.MicrosoftEdgeDevToolsClient] (elapsed=20s, pid=17904, timeout=180s): Get-AppxPackage -AllUsers -Name 'Microsoft.MicrosoftEdgeDevToolsClient' | Remove-AppxPackage -ErrorAction SilentlyContinue
-2026-07-15 16:12:44 INFO    win-debloater: PS still running [remove-by-name Microsoft.MicrosoftEdgeDevToolsClient] (elapsed=40s, pid=17904, timeout=180s): Get-AppxPackage -AllUsers -Name 'Microsoft.MicrosoftEdgeDevToolsClient' | Remove-AppxPackage -ErrorAction SilentlyContinue
-2026-07-15 16:13:04 INFO    win-debloater: PS still running [remove-by-name Microsoft.MicrosoftEdgeDevToolsClient] (elapsed=60s, pid=17904, timeout=180s): Get-AppxPackage -AllUsers -Name 'Microsoft.MicrosoftEdgeDevToolsClient' | Remove-AppxPackage -ErrorAction SilentlyContinue
-2026-07-15 16:13:20 WARNING win-debloater: PS rc=1 [remove-by-name Microsoft.MicrosoftEdgeDevToolsClient] in 76124ms: Get-AppxPackage -AllUsers -Name 'Microsoft.MicrosoftEdgeDevToolsClient' | Remove-AppxPackage -ErrorAction SilentlyContinue
-2026-07-15 16:13:20 INFO    win-debloater:   Step: Remove-AppxPackage -Package 'Microsoft.MicrosoftEdgeDevToolsClient_1000.25128.1000.0_neutral_neutral_8wekyb3d8bbwe' (timeout=180s)
-2026-07-15 16:13:20 INFO    win-debloater: PS starting [remove-by-fullname Microsoft.MicrosoftEdgeDevToolsClient] (timeout=180s): Remove-AppxPackage -AllUsers -Package 'Microsoft.MicrosoftEdgeDevToolsClient_1000.25128.1000.0_neutral_neutral_8wekyb3d8bbwe' -ErrorAction SilentlyContinue
-2026-07-15 16:13:40 INFO    win-debloater: PS still running [remove-by-fullname Microsoft.MicrosoftEdgeDevToolsClient] (elapsed=20s, pid=960, timeout=180s): Remove-AppxPackage -AllUsers -Package 'Microsoft.MicrosoftEdgeDevToolsClient_1000.25128.1000.0_neutral_neutral_8wekyb3d8bbwe' -ErrorAction SilentlyContinue
-2026-07-15 16:13:59 WARNING win-debloater: PS rc=1 [remove-by-fullname Microsoft.MicrosoftEdgeDevToolsClient] in 38597ms: Remove-AppxPackage -AllUsers -Package 'Microsoft.MicrosoftEdgeDevToolsClient_1000.25128.1000.0_neutral_neutral_8wekyb3d8bbwe' -ErrorAction SilentlyContinue
-2026-07-15 16:13:59 INFO    win-debloater:   Step: Remove-AppxProvisionedPackage 'Microsoft.MicrosoftEdgeDevToolsClient' (timeout=180s)
-2026-07-15 16:13:59 INFO    win-debloater: PS starting [deprovision Microsoft.MicrosoftEdgeDevToolsClient] (timeout=180s): Get-AppxProvisionedPackage -Online | Where-Object { $_.DisplayName -eq 'Microsoft.MicrosoftEdgeDevToolsClient' } | Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue
-2026-07-15 16:14:00 INFO    win-debloater: PS rc=0 [deprovision Microsoft.MicrosoftEdgeDevToolsClient] in 1081ms: Get-AppxProvisionedPackage -Online | Where-Object { $_.DisplayName -eq 'Microsoft.MicrosoftEdgeDevToolsClient' } | Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue
-2026-07-15 16:14:00 INFO    win-debloater: AppX 'Microsoft.MicrosoftEdgeDevToolsClient' step summary: unlock=OK, remove-by-name=FAIL(rc=1), remove-by-fullname=FAIL(rc=1), deprovision=OK -> overall=OK
-2026-07-15 16:14:00 INFO    win-debloater: BatchWorker: [1/2] OK: Edge DevTools (116s) — Removed
-2026-07-15 16:14:00 INFO    win-debloater: BatchWorker: [2/2] starting: Microsoft Edge
-2026-07-15 16:14:00 INFO    win-debloater: Edge uninstall: starting (deprovision=True, timeout=300s)
-2026-07-15 16:14:00 INFO    win-debloater: Edge uninstall [1/3]: setting AllowUninstall policy…
-2026-07-15 16:14:00 INFO    win-debloater: PS starting [edge:policy] (timeout=30s):
+2026-07-15 17:14:24 INFO    win-debloater: BatchWorker: starting 2 item(s)
+2026-07-15 17:14:24 INFO    win-debloater: BatchWorker: [1/2] starting: Edge DevTools
+2026-07-15 17:14:24 INFO    win-debloater: Removing AppX 'Microsoft.MicrosoftEdgeDevToolsClient' (full_name=Microsoft.MicrosoftEdgeDevToolsClient_1000.25128.1000.0_neutral_neutral_8wekyb3d8bbwe, non_removable=True, all_users=True, deprovision=True)
+2026-07-15 17:14:24 INFO    win-debloater:   Step 1/N: unlock NonRemovable registry for 'Microsoft.MicrosoftEdgeDevToolsClient'
+2026-07-15 17:14:24 INFO    win-debloater: PS starting [unlock Microsoft.MicrosoftEdgeDevToolsClient] (timeout=60s): $_fn = (Get-AppxPackage -Name 'Microsoft.MicrosoftEdgeDevToolsClient' | Select-Object -ExpandProperty PackageFullName -ErrorAction SilentlyContinue);if ($_fn) {  $_key = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore…
+2026-07-15 17:14:25 INFO    win-debloater: PS rc=0 [unlock Microsoft.MicrosoftEdgeDevToolsClient] in 785ms: $_fn = (Get-AppxPackage -Name 'Microsoft.MicrosoftEdgeDevToolsClient' | Select-Object -ExpandProperty PackageFullName -ErrorAction SilentlyContinue);if ($_fn) {  $_key = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore…
+2026-07-15 17:14:25 INFO    win-debloater:   Step: Remove-AppxPackage -Name 'Microsoft.MicrosoftEdgeDevToolsClient' (scope=-AllUsers, timeout=180s)
+2026-07-15 17:14:25 INFO    win-debloater: PS starting [remove-by-name Microsoft.MicrosoftEdgeDevToolsClient] (timeout=180s): Get-AppxPackage -AllUsers -Name 'Microsoft.MicrosoftEdgeDevToolsClient' | Remove-AppxPackage -ErrorAction SilentlyContinue
+2026-07-15 17:14:26 WARNING win-debloater: PS rc=1 [remove-by-name Microsoft.MicrosoftEdgeDevToolsClient] in 1230ms: Get-AppxPackage -AllUsers -Name 'Microsoft.MicrosoftEdgeDevToolsClient' | Remove-AppxPackage -ErrorAction SilentlyContinue
+2026-07-15 17:14:26 INFO    win-debloater:   Step: Remove-AppxPackage -Package 'Microsoft.MicrosoftEdgeDevToolsClient_1000.25128.1000.0_neutral_neutral_8wekyb3d8bbwe' (timeout=180s)
+2026-07-15 17:14:26 INFO    win-debloater: PS starting [remove-by-fullname Microsoft.MicrosoftEdgeDevToolsClient] (timeout=180s): Remove-AppxPackage -AllUsers -Package 'Microsoft.MicrosoftEdgeDevToolsClient_1000.25128.1000.0_neutral_neutral_8wekyb3d8bbwe' -ErrorAction SilentlyContinue
+2026-07-15 17:14:27 WARNING win-debloater: PS rc=1 [remove-by-fullname Microsoft.MicrosoftEdgeDevToolsClient] in 852ms: Remove-AppxPackage -AllUsers -Package 'Microsoft.MicrosoftEdgeDevToolsClient_1000.25128.1000.0_neutral_neutral_8wekyb3d8bbwe' -ErrorAction SilentlyContinue  ERR: Remove-AppxPackage : Removal failed. Please contact your software vendor.
+Deployment Remove operation with target volume C: on Package
+Microsoft.MicrosoftEdgeDevToolsClient_1000.25128.1000.0_neutral_neutral_8wekyb3d8bbwe from:   failed with error
+0x80070032. See http://go.microsoft.com/fwlink/?LinkId=235160 for help diagnosing app deployment issues.
+At line:1 char:49
++ ... ding]::UTF8;Remove-AppxPackage -AllUsers -Package 'Microsoft.Microsof ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:) [Remove-AppxPackage], COMException
+    + FullyQualifiedErrorId : System.Runtime.InteropServices.COMException,Microsoft.Windows.Appx.PackageManager.Comman
+   ds.RemoveAppxPackageCommand
+2026-07-15 17:14:27 INFO    win-debloater:   Step: Remove-AppxProvisionedPackage 'Microsoft.MicrosoftEdgeDevToolsClient' (timeout=180s)
+2026-07-15 17:14:27 INFO    win-debloater: PS starting [deprovision Microsoft.MicrosoftEdgeDevToolsClient] (timeout=180s): Get-AppxProvisionedPackage -Online | Where-Object { $_.DisplayName -eq 'Microsoft.MicrosoftEdgeDevToolsClient' } | Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue
+2026-07-15 17:14:28 INFO    win-debloater: PS rc=0 [deprovision Microsoft.MicrosoftEdgeDevToolsClient] in 801ms: Get-AppxProvisionedPackage -Online | Where-Object { $_.DisplayName -eq 'Microsoft.MicrosoftEdgeDevToolsClient' } | Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue
+2026-07-15 17:14:28 INFO    win-debloater: AppX 'Microsoft.MicrosoftEdgeDevToolsClient' step summary: unlock=OK, remove-by-name=FAIL(rc=1), remove-by-fullname=FAIL(rc=1), deprovision=OK -> real_remove=FAIL, deprovision=OK
+2026-07-15 17:14:28 INFO    win-debloater: AppX 'Microsoft.MicrosoftEdgeDevToolsClient': OS-protected removal (HRESULT 0x80070032); attempting force-delete fallback (WindowsApps takeown + delete)…
+2026-07-15 17:14:28 INFO    win-debloater: PS starting [force-delete-appx Microsoft.MicrosoftEdgeDevToolsClient] (timeout=180s):
+$ErrorActionPreference = 'SilentlyContinue'
+$install  = 'C:\Windows\SystemApps\Microsoft.MicrosoftEdgeDevToolsClient_8wekyb3d8bbwe'
+$fullname = 'Microsoft.MicrosoftEdgeDevToolsClient_1000.25128.1000.0_neutral_neutral_8wekyb3d8bbwe'
+$family…
+2026-07-15 17:14:33 INFO    win-debloater: PS rc=0 [force-delete-appx Microsoft.MicrosoftEdgeDevToolsClient] in 4621ms:
+$ErrorActionPreference = 'SilentlyContinue'
+$install  = 'C:\Windows\SystemApps\Microsoft.MicrosoftEdgeDevToolsClient_8wekyb3d8bbwe'
+$fullname = 'Microsoft.MicrosoftEdgeDevToolsClient_1000.25128.1000.0_neutral_neutral_8wekyb3d8bbwe'
+$family…
+2026-07-15 17:14:33 INFO    win-debloater: AppX 'Microsoft.MicrosoftEdgeDevToolsClient' force-delete: rc=0 (ok=True). stdout='force-delete deleted: C:\\Windows\\SystemApps\\Microsoft.MicrosoftEdgeDevToolsClient_8wekyb3d8bbwe\nforce-delete marked deprovisioned: Microsoft.MicrosoftEdgeDevToolsClient_8wekyb3d8bbwe'
+2026-07-15 17:14:33 INFO    win-debloater: BatchWorker: [1/2] OK: Edge DevTools (8s) — force-delete deleted: C:\Windows\SystemApps\Microsoft.MicrosoftEdgeDevToolsClient_8wekyb3d8bbwe
+2026-07-15 17:14:33 INFO    win-debloater: BatchWorker: [2/2] starting: Microsoft Edge
+2026-07-15 17:14:33 INFO    win-debloater: Edge uninstall: starting (deprovision=True, force_delete_on_block=True, timeout=300s)
+2026-07-15 17:14:33 INFO    win-debloater: Edge uninstall [1/5]: setting AllowUninstall policy…
+2026-07-15 17:14:33 INFO    win-debloater: PS starting [edge:policy] (timeout=30s):
 $ErrorActionPreference = 'SilentlyContinue'
 # The Policies\Microsoft\EdgeUpdate key used to be checked but is ignored on
 # Windows 11 22H2+; EdgeUpdateDev is the one setup.exe actually reads.
 $policyKeys = @(
     'HKLM:\SOFTWARE\Microsoft\…
-2026-07-15 16:14:00 INFO    win-debloater: PS rc=0 [edge:policy] in 611ms:
+2026-07-15 17:14:33 INFO    win-debloater: PS rc=0 [edge:policy] in 485ms:
 $ErrorActionPreference = 'SilentlyContinue'
 # The Policies\Microsoft\EdgeUpdate key used to be checked but is ignored on
 # Windows 11 22H2+; EdgeUpdateDev is the one setup.exe actually reads.
 $policyKeys = @(
     'HKLM:\SOFTWARE\Microsoft\…
-2026-07-15 16:14:00 INFO    win-debloater: Edge uninstall [2/3]: killing Edge/EdgeUpdate/WebView2 processes…
-2026-07-15 16:14:00 INFO    win-debloater: PS starting [edge:kill] (timeout=30s):
+2026-07-15 17:14:33 INFO    win-debloater: Edge uninstall [2/5]: killing Edge/EdgeUpdate/WebView2 processes…
+2026-07-15 17:14:33 INFO    win-debloater: PS starting [edge:kill] (timeout=30s):
 $ErrorActionPreference = 'SilentlyContinue'
 $procs = @('msedge', 'MicrosoftEdgeUpdate', 'msedgewebview2', 'identity_helper')
 $killed = @()
 foreach ($name in $procs) {
     $found = Get-Process -Name $name -ErrorAction SilentlyContinue
     i…
-2026-07-15 16:14:01 INFO    win-debloater: PS rc=0 [edge:kill] in 736ms:
+2026-07-15 17:14:34 INFO    win-debloater: PS rc=0 [edge:kill] in 628ms:
 $ErrorActionPreference = 'SilentlyContinue'
 $procs = @('msedge', 'MicrosoftEdgeUpdate', 'msedgewebview2', 'identity_helper')
 $killed = @()
 foreach ($name in $procs) {
     $found = Get-Process -Name $name -ErrorAction SilentlyContinue
     i…
-2026-07-15 16:14:01 INFO    win-debloater: Edge uninstall [3/3]: invoking setup.exe --force-uninstall (may take minutes)…
-2026-07-15 16:14:01 INFO    win-debloater: PS starting [edge:setup] (timeout=300s):
+2026-07-15 17:14:34 INFO    win-debloater: Edge uninstall [3/5]: patching IntegratedServicesRegionPolicySet.json (EEA workaround)…
+2026-07-15 17:14:34 INFO    win-debloater: PS starting [edge:policy-json-patch] (timeout=60s):
+$ErrorActionPreference = 'SilentlyContinue'
+$json_path = 'C:\Windows\System32\IntegratedServicesRegionPolicySet.json'
+$backup    = 'C:\Users\vaibh\AppData\Local\WinDebloater\IntegratedServicesRegionPolicySet.backup.json'
+
+if (-not (Test-Pa…
+2026-07-15 17:14:35 INFO    win-debloater: PS rc=0 [edge:policy-json-patch] in 1070ms:
+$ErrorActionPreference = 'SilentlyContinue'
+$json_path = 'C:\Windows\System32\IntegratedServicesRegionPolicySet.json'
+$backup    = 'C:\Users\vaibh\AppData\Local\WinDebloater\IntegratedServicesRegionPolicySet.backup.json'
+
+if (-not (Test-Pa…
+2026-07-15 17:14:35 INFO    win-debloater: Edge uninstall [3/5]: JSON patch stdout='policy-json: backup written to C:\\Users\\vaibh\\AppData\\Local\\WinDebloater\\IntegratedServicesRegionPolicySet.backup.json\npolicy-json: patched 1 policy/policies'
+2026-07-15 17:14:35 INFO    win-debloater: Edge uninstall [4/5]: invoking setup.exe --force-uninstall (may take minutes)…
+2026-07-15 17:14:35 INFO    win-debloater: PS starting [edge:setup] (timeout=300s):
 $ErrorActionPreference = 'SilentlyContinue'
 $roots = @(
     (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application'),
@@ -59,7 +90,7 @@ $roots = @(
 $ran = $false
 $worst = 0
 foreach ($root in $roo…
-2026-07-15 16:14:05 WARNING win-debloater: PS rc=93 [edge:setup] in 3415ms:
+2026-07-15 17:14:38 WARNING win-debloater: PS rc=93 [edge:setup] in 3255ms:
 $ErrorActionPreference = 'SilentlyContinue'
 $roots = @(
     (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application'),
@@ -68,84 +99,36 @@ $roots = @(
 $ran = $false
 $worst = 0
 foreach ($root in $roo…
-2026-07-15 16:14:05 INFO    win-debloater: Edge uninstall: setup.exe returned rc=93 (ok=False). stdout='edge: invoking setup.exe for version 149.0.4022.98\nsetup.exe (149.0.4022.98) exit=93\nedge: invoking setup.exe for version 150.0.4078.65\nsetup.exe (150.0.4078.65) exit=93'
-2026-07-15 16:14:05 INFO    win-debloater: Edge uninstall: deprovisioning AppX entry…
-2026-07-15 16:14:05 INFO    win-debloater: PS starting [edge:deprovision] (timeout=120s): Get-AppxProvisionedPackage -Online | Where-Object { $_.DisplayName -like 'Microsoft.MicrosoftEdge*' } | Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue
-2026-07-15 16:14:06 INFO    win-debloater: PS rc=0 [edge:deprovision] in 1303ms: Get-AppxProvisionedPackage -Online | Where-Object { $_.DisplayName -like 'Microsoft.MicrosoftEdge*' } | Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue
-2026-07-15 16:14:06 INFO    win-debloater: Edge uninstall: done (ok=False)
-2026-07-15 16:14:06 INFO    win-debloater: BatchWorker: [2/2] FAIL: Microsoft Edge (6s) — Edge setup.exe refused to uninstall (exit 93: 'Uninstall was blocked for this product'). On Windows 11 24H2+, Microsoft only permits Edge removal when it's launched by an approved system process (e.g. the Settings app). Try uninstalling from Settings > Apps > Installed apps > Microsoft Edge, or apply the EEA region workaround.
-2026-07-15 16:14:06 INFO    win-debloater: BatchWorker: finished 1/2 in 122s
-2026-07-15 16:14:18 INFO    win-debloater: BatchWorker: starting 2 item(s)
-2026-07-15 16:14:22 INFO    win-debloater: BatchWorker: [1/2] starting: Edge DevTools
-2026-07-15 16:14:22 INFO    win-debloater: Removing AppX 'Microsoft.MicrosoftEdgeDevToolsClient' (full_name=Microsoft.MicrosoftEdgeDevToolsClient_1000.25128.1000.0_neutral_neutral_8wekyb3d8bbwe, non_removable=True, all_users=True, deprovision=True)
-2026-07-15 16:14:22 INFO    win-debloater:   Step 1/N: unlock NonRemovable registry for 'Microsoft.MicrosoftEdgeDevToolsClient'
-2026-07-15 16:14:22 INFO    win-debloater: PS starting [unlock Microsoft.MicrosoftEdgeDevToolsClient] (timeout=60s): $_fn = (Get-AppxPackage -Name 'Microsoft.MicrosoftEdgeDevToolsClient' | Select-Object -ExpandProperty PackageFullName -ErrorAction SilentlyContinue);if ($_fn) {  $_key = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore…
-2026-07-15 16:14:23 INFO    win-debloater: PS rc=0 [unlock Microsoft.MicrosoftEdgeDevToolsClient] in 912ms: $_fn = (Get-AppxPackage -Name 'Microsoft.MicrosoftEdgeDevToolsClient' | Select-Object -ExpandProperty PackageFullName -ErrorAction SilentlyContinue);if ($_fn) {  $_key = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore…
-2026-07-15 16:14:23 INFO    win-debloater:   Step: Remove-AppxPackage -Name 'Microsoft.MicrosoftEdgeDevToolsClient' (scope=-AllUsers, timeout=180s)
-2026-07-15 16:14:23 INFO    win-debloater: PS starting [remove-by-name Microsoft.MicrosoftEdgeDevToolsClient] (timeout=180s): Get-AppxPackage -AllUsers -Name 'Microsoft.MicrosoftEdgeDevToolsClient' | Remove-AppxPackage -ErrorAction SilentlyContinue
-2026-07-15 16:14:28 WARNING win-debloater: PS rc=1 [remove-by-name Microsoft.MicrosoftEdgeDevToolsClient] in 5061ms: Get-AppxPackage -AllUsers -Name 'Microsoft.MicrosoftEdgeDevToolsClient' | Remove-AppxPackage -ErrorAction SilentlyContinue
-2026-07-15 16:14:28 INFO    win-debloater:   Step: Remove-AppxPackage -Package 'Microsoft.MicrosoftEdgeDevToolsClient_1000.25128.1000.0_neutral_neutral_8wekyb3d8bbwe' (timeout=180s)
-2026-07-15 16:14:28 INFO    win-debloater: PS starting [remove-by-fullname Microsoft.MicrosoftEdgeDevToolsClient] (timeout=180s): Remove-AppxPackage -AllUsers -Package 'Microsoft.MicrosoftEdgeDevToolsClient_1000.25128.1000.0_neutral_neutral_8wekyb3d8bbwe' -ErrorAction SilentlyContinue
-2026-07-15 16:14:48 INFO    win-debloater: PS still running [remove-by-fullname Microsoft.MicrosoftEdgeDevToolsClient] (elapsed=20s, pid=12548, timeout=180s): Remove-AppxPackage -AllUsers -Package 'Microsoft.MicrosoftEdgeDevToolsClient_1000.25128.1000.0_neutral_neutral_8wekyb3d8bbwe' -ErrorAction SilentlyContinue
-2026-07-15 16:15:04 WARNING win-debloater: PS rc=1 [remove-by-fullname Microsoft.MicrosoftEdgeDevToolsClient] in 35682ms: Remove-AppxPackage -AllUsers -Package 'Microsoft.MicrosoftEdgeDevToolsClient_1000.25128.1000.0_neutral_neutral_8wekyb3d8bbwe' -ErrorAction SilentlyContinue
-2026-07-15 16:15:04 INFO    win-debloater:   Step: Remove-AppxProvisionedPackage 'Microsoft.MicrosoftEdgeDevToolsClient' (timeout=180s)
-2026-07-15 16:15:04 INFO    win-debloater: PS starting [deprovision Microsoft.MicrosoftEdgeDevToolsClient] (timeout=180s): Get-AppxProvisionedPackage -Online | Where-Object { $_.DisplayName -eq 'Microsoft.MicrosoftEdgeDevToolsClient' } | Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue
-2026-07-15 16:15:05 INFO    win-debloater: PS rc=0 [deprovision Microsoft.MicrosoftEdgeDevToolsClient] in 1122ms: Get-AppxProvisionedPackage -Online | Where-Object { $_.DisplayName -eq 'Microsoft.MicrosoftEdgeDevToolsClient' } | Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue
-2026-07-15 16:15:05 INFO    win-debloater: AppX 'Microsoft.MicrosoftEdgeDevToolsClient' step summary: unlock=OK, remove-by-name=FAIL(rc=1), remove-by-fullname=FAIL(rc=1), deprovision=OK -> overall=OK
-2026-07-15 16:15:05 INFO    win-debloater: BatchWorker: [1/2] OK: Edge DevTools (42s) — Removed
-2026-07-15 16:15:05 INFO    win-debloater: BatchWorker: [2/2] starting: Microsoft Edge
-2026-07-15 16:15:05 INFO    win-debloater: Edge uninstall: starting (deprovision=True, timeout=300s)
-2026-07-15 16:15:05 INFO    win-debloater: Edge uninstall [1/3]: setting AllowUninstall policy…
-2026-07-15 16:15:05 INFO    win-debloater: PS starting [edge:policy] (timeout=30s):
+2026-07-15 17:14:38 INFO    win-debloater: Edge uninstall [4/5]: setup.exe returned rc=93 (ok=False). stdout='edge: invoking setup.exe for version 149.0.4022.98\nsetup.exe (149.0.4022.98) exit=93\nedge: invoking setup.exe for version 150.0.4078.65\nsetup.exe (150.0.4078.65) exit=93'
+2026-07-15 17:14:38 INFO    win-debloater: Edge uninstall [5/5]: setup.exe returned 93 (blocked); falling through to force-delete fallback…
+2026-07-15 17:14:38 INFO    win-debloater: PS starting [edge:force-delete] (timeout=180s):
 $ErrorActionPreference = 'SilentlyContinue'
-# The Policies\Microsoft\EdgeUpdate key used to be checked but is ignored on
-# Windows 11 22H2+; EdgeUpdateDev is the one setup.exe actually reads.
-$policyKeys = @(
-    'HKLM:\SOFTWARE\Microsoft\…
-2026-07-15 16:15:05 INFO    win-debloater: PS rc=0 [edge:policy] in 558ms:
+$actions = @()
+
+# 1) Kill anything Edge/EdgeUpdate/WebView that might hold files open.
+$procs = @('msedge', 'MicrosoftEdgeUpdate', 'msedgewebview2', 'identity_helper', 'msedge_notification_client…
+2026-07-15 17:14:58 INFO    win-debloater: PS still running [edge:force-delete] (elapsed=20s, pid=4420, timeout=180s):
 $ErrorActionPreference = 'SilentlyContinue'
-# The Policies\Microsoft\EdgeUpdate key used to be checked but is ignored on
-# Windows 11 22H2+; EdgeUpdateDev is the one setup.exe actually reads.
-$policyKeys = @(
-    'HKLM:\SOFTWARE\Microsoft\…
-2026-07-15 16:15:05 INFO    win-debloater: Edge uninstall [2/3]: killing Edge/EdgeUpdate/WebView2 processes…
-2026-07-15 16:15:05 INFO    win-debloater: PS starting [edge:kill] (timeout=30s):
+$actions = @()
+
+# 1) Kill anything Edge/EdgeUpdate/WebView that might hold files open.
+$procs = @('msedge', 'MicrosoftEdgeUpdate', 'msedgewebview2', 'identity_helper', 'msedge_notification_client…
+2026-07-15 17:15:18 INFO    win-debloater: PS still running [edge:force-delete] (elapsed=40s, pid=4420, timeout=180s):
 $ErrorActionPreference = 'SilentlyContinue'
-$procs = @('msedge', 'MicrosoftEdgeUpdate', 'msedgewebview2', 'identity_helper')
-$killed = @()
-foreach ($name in $procs) {
-    $found = Get-Process -Name $name -ErrorAction SilentlyContinue
-    i…
-2026-07-15 16:15:06 INFO    win-debloater: PS rc=0 [edge:kill] in 699ms:
+$actions = @()
+
+# 1) Kill anything Edge/EdgeUpdate/WebView that might hold files open.
+$procs = @('msedge', 'MicrosoftEdgeUpdate', 'msedgewebview2', 'identity_helper', 'msedge_notification_client…
+2026-07-15 17:15:37 WARNING win-debloater: PS rc=1 [edge:force-delete] in 58643ms:
 $ErrorActionPreference = 'SilentlyContinue'
-$procs = @('msedge', 'MicrosoftEdgeUpdate', 'msedgewebview2', 'identity_helper')
-$killed = @()
-foreach ($name in $procs) {
-    $found = Get-Process -Name $name -ErrorAction SilentlyContinue
-    i…
-2026-07-15 16:15:06 INFO    win-debloater: Edge uninstall [3/3]: invoking setup.exe --force-uninstall (may take minutes)…
-2026-07-15 16:15:06 INFO    win-debloater: PS starting [edge:setup] (timeout=300s):
-$ErrorActionPreference = 'SilentlyContinue'
-$roots = @(
-    (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application'),
-    (Join-Path $env:ProgramFiles 'Microsoft\Edge\Application')
-)
-$ran = $false
-$worst = 0
-foreach ($root in $roo…
-2026-07-15 16:15:09 WARNING win-debloater: PS rc=93 [edge:setup] in 3174ms:
-$ErrorActionPreference = 'SilentlyContinue'
-$roots = @(
-    (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application'),
-    (Join-Path $env:ProgramFiles 'Microsoft\Edge\Application')
-)
-$ran = $false
-$worst = 0
-foreach ($root in $roo…
-2026-07-15 16:15:09 INFO    win-debloater: Edge uninstall: setup.exe returned rc=93 (ok=False). stdout='edge: invoking setup.exe for version 149.0.4022.98\nsetup.exe (149.0.4022.98) exit=93\nedge: invoking setup.exe for version 150.0.4078.65\nsetup.exe (150.0.4078.65) exit=93'
-2026-07-15 16:15:09 INFO    win-debloater: Edge uninstall: deprovisioning AppX entry…
-2026-07-15 16:15:09 INFO    win-debloater: PS starting [edge:deprovision] (timeout=120s): Get-AppxProvisionedPackage -Online | Where-Object { $_.DisplayName -like 'Microsoft.MicrosoftEdge*' } | Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue
-2026-07-15 16:15:10 INFO    win-debloater: PS rc=0 [edge:deprovision] in 1230ms: Get-AppxProvisionedPackage -Online | Where-Object { $_.DisplayName -like 'Microsoft.MicrosoftEdge*' } | Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue
-2026-07-15 16:15:10 INFO    win-debloater: Edge uninstall: done (ok=False)
-2026-07-15 16:15:10 INFO    win-debloater: BatchWorker: [2/2] FAIL: Microsoft Edge (5s) — Edge setup.exe refused to uninstall (exit 93: 'Uninstall was blocked for this product'). On Windows 11 24H2+, Microsoft only permits Edge removal when it's launched by an approved system process (e.g. the Settings app). Try uninstalling from Settings > Apps > Installed apps > Microsoft Edge, or apply the EEA region workaround.
-2026-07-15 16:15:10 INFO    win-debloater: BatchWorker: finished 1/2 in 48s
+$actions = @()
+
+# 1) Kill anything Edge/EdgeUpdate/WebView that might hold files open.
+$procs = @('msedge', 'MicrosoftEdgeUpdate', 'msedgewebview2', 'identity_helper', 'msedge_notification_client…
+2026-07-15 17:15:38 INFO    win-debloater: Edge uninstall [5/5]: force-delete rc=1 (ok=False). stdout=''
+2026-07-15 17:15:38 INFO    win-debloater: Edge uninstall: deprovisioning AppX entry…
+2026-07-15 17:15:38 INFO    win-debloater: PS starting [edge:deprovision] (timeout=120s): Get-AppxProvisionedPackage -Online | Where-Object { $_.DisplayName -like 'Microsoft.MicrosoftEdge*' } | Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue
+2026-07-15 17:15:39 INFO    win-debloater: PS rc=0 [edge:deprovision] in 924ms: Get-AppxProvisionedPackage -Online | Where-Object { $_.DisplayName -like 'Microsoft.MicrosoftEdge*' } | Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue
+2026-07-15 17:15:39 INFO    win-debloater: Edge uninstall: done (ok=False)
+2026-07-15 17:15:39 INFO    win-debloater: BatchWorker: [2/2] FAIL: Microsoft Edge (66s) — Edge setup.exe was blocked (exit 93) and the force-delete fallback also failed: see log for details.
+2026-07-15 17:15:39 INFO    win-debloater: BatchWorker: finished 1/2 in 75s
